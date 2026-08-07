@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.npm-cache/
+.DS_Store
+*.log
+
+.env
+.env.local
+.env.*.local
+apps/server/.env
+apps/server/.env.local
+apps/web/.env
+apps/web/.env.local

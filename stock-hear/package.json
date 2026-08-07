@@ -1,0 +1,19 @@
+{
+  "name": "stock-hear",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:web": "npm run dev -w @stock-hear/web",
+    "dev:server": "npm run dev -w @stock-hear/server",
+    "build": "npm run build -w @stock-hear/server && npm run build -w @stock-hear/web",
+    "typecheck": "npm run typecheck -w @stock-hear/server && npm run typecheck -w @stock-hear/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "typescript": "^5.6.3"
+  }
+}
