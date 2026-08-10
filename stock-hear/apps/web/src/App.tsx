@@ -78,6 +78,7 @@ export const App = () => {
               onMutedChange={setMuted}
               onVolumeChange={setVolume}
               onSample={(direction) => sonification.playSample(direction)}
+              onVolumeSample={(volume) => sonification.playSample("flat", volume)}
             />
             <VoiceControls trade={latestTrade} onSoundEnabledChange={setSoundEnabled} />
           </div>

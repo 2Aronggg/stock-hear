@@ -6,6 +6,7 @@ interface AudioControlsProps {
   onMutedChange: (muted: boolean) => void;
   onVolumeChange: (volume: number) => void;
   onSample: (direction: "up" | "down" | "flat") => void;
+  onVolumeSample: (volume: "low" | "high") => void;
 }
 
 export const AudioControls = ({
@@ -15,7 +16,8 @@ export const AudioControls = ({
   onEnabledChange,
   onMutedChange,
   onVolumeChange,
-  onSample
+  onSample,
+  onVolumeSample
 }: AudioControlsProps) => (
   <section className="panel" aria-labelledby="audio-controls-title">
     <h2 id="audio-controls-title">소리화 제어</h2>
@@ -25,6 +27,14 @@ export const AudioControls = ({
       </button>
       <button type="button" aria-pressed={muted} onClick={() => onMutedChange(!muted)}>
         {muted ? "음소거 해제" : "음소거"}
+      </button>
+    </div>
+    <div className="button-row" aria-label="거래량 소리 샘플">
+      <button type="button" onClick={() => onVolumeSample("low")}>
+        적은 거래량
+      </button>
+      <button type="button" onClick={() => onVolumeSample("high")}>
+       많은 거래량
       </button>
     </div>
     <label htmlFor="volume">볼륨</label>

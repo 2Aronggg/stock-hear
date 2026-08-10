@@ -32,21 +32,30 @@ export class Sonification {
     oscillator.stop(context.currentTime + 0.1);
   }
 
-  playSample(direction: "up" | "down" | "flat"): void {
-    const sampleTrade: RealtimeTrade = {
-      symbol: "SAMPLE",
-      stockName: "샘플",
-      tradeTime: "000000",
-      currentPrice: 10000,
-      changePrice: direction === "up" ? 100 : direction === "down" ? -100 : 0,
-      changeRate: direction === "up" ? 1.2 : direction === "down" ? -1.2 : 0,
-      tradeVolume: 1000,
-      accumulatedVolume: 1000,
-      receivedAt: new Date().toISOString()
-    };
+  playSample(
+  direction: "up" | "down" | "flat",
+  volume: "low" | "high" = "low"
+): void {
+  const sampleTrade: RealtimeTrade = {
+    symbol: "SAMPLE",
+    stockName: "샘플",
+    tradeTime: "000000",
+    currentPrice: 10000,
+    changePrice:
+      direction === "up" ? 100 :
+      direction === "down" ? -100 :
+      0,
+    changeRate:
+      direction === "up" ? 1.2 :
+      direction === "down" ? -1.2 :
+      0,
+    tradeVolume: volume === "high" ? 1_000_000 : 1_000,
+    accumulatedVolume: 1_000_000,
+    receivedAt: new Date().toISOString()
+  };
 
-    this.playTrade(sampleTrade);
-  }
+  this.playTrade(sampleTrade);
+}
 
   private getAudioContext(): AudioContext {
     this.audioContext ??= new AudioContext();
