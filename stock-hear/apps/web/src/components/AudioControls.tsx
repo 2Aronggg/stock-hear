@@ -34,7 +34,7 @@ export const AudioControls = ({
         적은 거래량
       </button>
       <button type="button" onClick={() => onVolumeSample("high")}>
-       많은 거래량
+        많은 거래량
       </button>
     </div>
     <label htmlFor="volume">볼륨</label>
