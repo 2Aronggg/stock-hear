@@ -6,12 +6,17 @@ export type VoiceCommand =
   | "stop-sound"
   | "unknown";
 
+interface SpeechRecognitionErrorEventLike {
+  error: string;
+}
+
 interface SpeechRecognitionLike {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
   onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   start: () => void;
   stop: () => void;
 }
@@ -72,7 +77,11 @@ export const speak = (text: string): void => {
   window.speechSynthesis.speak(utterance);
 };
 
-export const listenOnce = (onTranscript: (transcript: string) => void, onEnd: () => void): boolean => {
+export const listenOnce = (
+  onTranscript: (transcript: string) => void,
+  onEnd: () => void,
+  onError: (error: string) => void
+): boolean => {
   const speechWindow = window as SpeechWindow;
   const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
@@ -88,6 +97,9 @@ export const listenOnce = (onTranscript: (transcript: string) => void, onEnd: ()
     onTranscript(event.results[0]?.[0]?.transcript ?? "");
   };
   recognition.onend = onEnd;
+  recognition.onerror = (event) => {
+    onError(event.error);
+  };
   recognition.start();
 
   return true;

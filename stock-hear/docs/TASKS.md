@@ -10,7 +10,7 @@
 | T-04 | 체결 메시지 파싱 | 미정 | `feature/kis-parser` | 대기 | `apps/server/src/kis/parser.ts` | 공식 필드 확인 후 구현 |
 | T-05 | 프론트 실데이터 표시 | 미정 | `feature/market-display` | 진행 중 | `apps/web/src/components/MarketDisplay.tsx` | 서버 trade 연결 필요 |
 | T-06 | 소리화 고도화 | 미정 | `feature/sonification` | 진행 중 | `apps/web/src/audio/sonification.ts` | 체결빈도 리듬 추가 |
-| T-07 | 음성 명령 고도화 | 미정 | `feature/voice-controls` | 진행 중 | `apps/web/src/audio/speech.ts`, `VoiceControls.tsx` | 브라우저 테스트 필요 |
+| T-07 | 음성 명령 고도화 | 미정 | `feature/voice-controls` | 완료 | `apps/web/src/audio/speech.ts`, `VoiceControls.tsx` | 인식 오류(onerror) 처리, 듣는 중 상태 표시(aria-pressed/disabled), 상태 안내용 aria-live 영역 추가. 헤드리스 브라우저로 상태 전환 확인함. 실제 마이크 입력을 통한 인식 정확도는 실기기 테스트 필요. |
 | T-08 | 접근성 검증 | 미정 | `feature/accessibility-check` | 대기 | `App.tsx`, `styles.css` | 키보드, 화면낭독기 |
 
 ## 작업 규칙
