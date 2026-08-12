@@ -6,6 +6,7 @@ const envSchema = z.object({
   KIS_APP_SECRET: z.string().optional(),
   KIS_REST_BASE_URL: z.string().url().optional(),
   KIS_WEBSOCKET_URL: z.string().url().optional(),
+  KIS_APPROVAL_KEY: z.string().optional(),
   KIS_ENVIRONMENT: z.enum(["real", "virtual"]).default("real"),
   PORT: z.coerce.number().int().positive().default(4000),
   CLIENT_ORIGIN: z.string().url().default("http://localhost:5173")
