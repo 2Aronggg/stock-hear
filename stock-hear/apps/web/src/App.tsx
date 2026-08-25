@@ -3,17 +3,32 @@ import { MarketSocket } from "./api/marketSocket";
 import { Sonification } from "./audio/sonification";
 import { AudioControls } from "./components/AudioControls";
 import { MarketDisplay } from "./components/MarketDisplay";
-import { StockSelector } from "./components/StockSelector";
+import { isSupportedSymbol, StockSelector } from "./components/StockSelector";
 import { VoiceControls } from "./components/VoiceControls";
 import type { ConnectionStatus, RealtimeTrade, ServerSocketMessage } from "./types";
 
 const websocketUrl = import.meta.env.VITE_WEBSOCKET_URL ?? "ws://localhost:4000/ws";
 
+const selectedSymbolStorageKey = "stock-hear:selected-symbol";
+const defaultSymbol = "005930";
+const soundEnabledStorageKey = "stock-hear:sound-enabled";
+
+const getInitialSymbol = (): string => {
+  const savedSymbol = window.localStorage.getItem(selectedSymbolStorageKey);
+
+  return savedSymbol && isSupportedSymbol(savedSymbol)
+    ? savedSymbol
+    : defaultSymbol;
+};
+
+const getInitialSoundEnabled = (): boolean =>
+  window.localStorage.getItem(soundEnabledStorageKey) === "true";
+
 export const App = () => {
-  const [symbol, setSymbol] = useState("005930");
+  const [symbol, setSymbol] = useState(getInitialSymbol);
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [latestTrade, setLatestTrade] = useState<RealtimeTrade | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(getInitialSoundEnabled);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.15);
   const sonification = useMemo(() => new Sonification(), []);
@@ -50,9 +65,26 @@ export const App = () => {
   }, [sonification]);
   
   const handleSymbolChange = (nextSymbol: string): void => {
+    if (nextSymbol === symbol || !isSupportedSymbol(nextSymbol)) {
+      return;
+    }
+    
     socketRef.current?.unsubscribe(symbol);
     socketRef.current?.subscribe(nextSymbol);
+    
+    window.localStorage.setItem(selectedSymbolStorageKey, nextSymbol);
+    setLatestTrade(null);
     setSymbol(nextSymbol);
+  };
+
+  const handleSoundEnabledChange = (enabled: boolean): void => {
+    window.localStorage.setItem(
+      soundEnabledStorageKey,
+      String(enabled)
+    );
+
+    soundEnabledRef.current = enabled;
+    setSoundEnabled(enabled);
   };
 
   return (
@@ -79,13 +111,13 @@ export const App = () => {
               enabled={soundEnabled}
               muted={muted}
               volume={volume}
-              onEnabledChange={setSoundEnabled}
+              onEnabledChange={handleSoundEnabledChange}
               onMutedChange={setMuted}
               onVolumeChange={setVolume}
               onSample={(direction) => sonification.playSample(direction)}
               onVolumeSample={(volume) => sonification.playSample("flat", volume)}
             />
-            <VoiceControls trade={latestTrade} onSoundEnabledChange={setSoundEnabled} />
+            <VoiceControls trade={latestTrade} onSoundEnabledChange={handleSoundEnabledChange} />
           </div>
         </div>
       </main>
