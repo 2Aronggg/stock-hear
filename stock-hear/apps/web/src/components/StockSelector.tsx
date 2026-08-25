@@ -6,7 +6,10 @@ interface StockSelectorProps {
 const starterStocks = [
   { symbol: "005930", name: "삼성전자" },
   { symbol: "000660", name: "SK하이닉스" },
-  { symbol: "035420", name: "NAVER" }
+  { symbol: "035420", name: "NAVER" },
+  { symbol: "122630", name: "KODEX 레버리지" },
+  { symbol: "041190", name: "우리기술투자" },
+  { symbol: "MOCK_SURGE", name: "급등주 (Mock)" },
 ];
 
 export const StockSelector = ({ symbol, onSymbolChange }: StockSelectorProps) => (
