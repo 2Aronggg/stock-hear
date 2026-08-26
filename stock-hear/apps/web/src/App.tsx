@@ -48,7 +48,7 @@ export const App = () => {
     socket.connect();
     return () => socket.disconnect();
   }, [sonification, symbol]);
-  
+
   const handleSymbolChange = (nextSymbol: string): void => {
     socketRef.current?.unsubscribe(symbol);
     socketRef.current?.subscribe(nextSymbol);

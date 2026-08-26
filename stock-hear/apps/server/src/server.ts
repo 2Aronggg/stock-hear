@@ -92,10 +92,11 @@ const startServer = async (): Promise<void> => {
         kisSymbol: TEST_SYMBOL
       });
     });
-  } catch {
-    console.error(
-      "Failed to start stock-hear server because KIS connection failed."
-    );
+  } catch (error) {
+  console.error(
+    "Failed to start stock-hear server because KIS connection failed.",
+    error
+  );
 
     process.exitCode = 1;
   }
