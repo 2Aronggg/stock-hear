@@ -360,37 +360,38 @@ export class Sonification {
    * =========================
    */
   private getTradeVolume(
-    tradeVolume: number
-  ): number {
-    const safeVolume = Math.max(
-      1,
-      tradeVolume
-    );
+  tradeVolume: number
+): number {
+  const safeVolume = Math.max(
+    1,
+    tradeVolume
+  );
 
-    const logVolume =
-      Math.log10(safeVolume);
+  const logVolume =
+    Math.log10(safeVolume);
 
-    const normalized =
-      Math.max(
-        0,
-        Math.min(
-          1,
-          logVolume / 4
-        )
-      );
-
-    const multiplier =
-      0.55 +
-      normalized * 0.45;
-
-    return Math.min(
-      0.4,
-      Math.max(
-        0.001,
-        this.volume * multiplier
+  const normalized =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        logVolume / 4
       )
     );
-  }
+
+  // 거래량에 따른 음량 차이를 더 크게
+  const multiplier =
+    0.2 +
+    Math.pow(normalized, 0.6) * 0.8;
+
+  return Math.min(
+    0.4,
+    Math.max(
+      0.001,
+      this.volume * multiplier
+    )
+  );
+}
 
   /*
    * =========================
