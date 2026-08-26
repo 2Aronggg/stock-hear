@@ -1,7 +1,6 @@
 import type { RealtimeTrade } from "../types";
 
 type Direction = "up" | "down" | "flat";
-type EventState = "normal" | "surge" | "drop";
 
 export class Sonification {
   private audioContext: AudioContext | null = null;
@@ -11,8 +10,23 @@ export class Sonification {
   // 종목별 이전 가격
   private previousPrices = new Map<string, number>();
 
-  // 종목별 급등락 상태
-  private eventStates = new Map<string, EventState>();
+  // 종목별 급등락 threshold 레벨
+  //
+  //  0  = normal
+  //  1  = +5%
+  //  2  = +10%
+  //  3  = +15%
+  //  4  = +20%
+  //  5  = +25%
+  //  6  = +30%
+  //
+  // -1  = -5%
+  // -2  = -10%
+  // -3  = -15%
+  // -4  = -20%
+  // -5  = -25%
+  // -6  = -30%
+  private eventLevels = new Map<string, number>();
 
   // 종목별 거래량 강조음 마지막 재생 시각
   private lastRollTimes = new Map<string, number>();
@@ -54,41 +68,77 @@ export class Sonification {
 
     /*
      * =========================
-     * 2. 종목별 급등락 상태 확인
+     * 2. 급등락 이벤트 확인
      * =========================
+     *
+     * 등락률을 5% 단위로 구간화한다.
+     *
+     * +5%   → level 1
+     * +10%  → level 2
+     * +15%  → level 3
+     * +20%  → level 4
+     * +25%  → level 5
+     * +30%  → level 6
+     *
+     * -5%   → level -1
+     * -10%  → level -2
+     * -15%  → level -3
+     * -20%  → level -4
+     * -25%  → level -5
+     * -30%  → level -6
+     *
+     * 같은 구간 안에서는 이벤트음을
+     * 반복하지 않는다.
      */
-    const nextEventState =
-      this.getEventState(trade.changeRate);
+    const nextEventLevel =
+      this.getEventLevel(trade.changeRate);
 
-    const previousEventState =
-      this.eventStates.get(symbol) ?? "normal";
+    const previousEventLevel =
+      this.eventLevels.get(symbol) ?? 0;
 
     /*
-     * 급등락 이벤트음은
+     * 새로운 threshold를 돌파했을 때만
+     * 급등락 이벤트음을 재생한다.
      *
-     * normal → surge
-     * normal → drop
+     * 예:
      *
-     * 으로 진입할 때만 발생
+     * +4.9 → +5.1   🔔
+     * +5.1 → +8.0   -
+     * +8.0 → +10.1  🔔
      *
-     * 따라서 같은 급등 구간에서
-     * 체결이 계속 들어와도 효과음이
-     * 계속 반복되지 않음.
+     * 반대로 threshold가 낮아지는 경우에는
+     * 이벤트음을 내지 않는다.
+     *
+     * +10 → +8       -
+     * +8  → +5       -
+     *
+     * 다시 +10을 돌파하면
+     * 이전 레벨이 1이므로 다시 이벤트음 발생.
      */
     if (
-      nextEventState !== "normal" &&
-      nextEventState !== previousEventState
+      nextEventLevel !== 0 &&
+      nextEventLevel !== previousEventLevel
     ) {
-      this.playEventSound(
-        context,
-        nextEventState
-      );
+      const isNewSurge =
+        nextEventLevel > 0 &&
+        nextEventLevel > previousEventLevel;
+
+      const isNewDrop =
+        nextEventLevel < 0 &&
+        nextEventLevel < previousEventLevel;
+
+      if (isNewSurge || isNewDrop) {
+        this.playEventSound(
+          context,
+          nextEventLevel
+        );
+      }
     }
 
-    // 종목별 상태 저장
-    this.eventStates.set(
+    // 현재 이벤트 레벨 저장
+    this.eventLevels.set(
       symbol,
-      nextEventState
+      nextEventLevel
     );
 
     /*
@@ -109,11 +159,9 @@ export class Sonification {
     );
 
     /*
-     * 거래량 자체를 음량으로 크게 차이나게
-     * 만들기보다는 일정한 음량을 유지한다.
-     *
-     * 거래량의 차이는 아래의
-     * roll sound로 표현한다.
+     * 거래량 자체를 음량으로 크게
+     * 차이나게 만들지 않고,
+     * 거래량의 차이는 roll sound로 표현한다.
      */
     const volumeLevel =
       this.getTradeVolume(
@@ -131,8 +179,7 @@ export class Sonification {
     const now = context.currentTime;
 
     /*
-     * 일반 체결음은 모든 체결에서
-     * 한 번만 재생한다.
+     * 일반 체결음
      */
     this.playPulse(
       context,
@@ -149,9 +196,8 @@ export class Sonification {
      * 거래량이 일정 수준 이상이면
      * 짧은 "또르륵" 소리를 추가한다.
      *
-     * 단, 실시간 체결 데이터가 매우 빠르게
-     * 들어오는 경우 소리가 겹치지 않도록
-     * 종목별 cooldown을 적용한다.
+     * 실시간 체결 데이터가 매우 빠르게
+     * 들어오는 경우 cooldown을 적용한다.
      */
     if (
       this.shouldPlayRollSound(
@@ -181,177 +227,195 @@ export class Sonification {
 
   /*
    * =========================
-   * 급등락 상태
+   * 급등락 이벤트 레벨
    * =========================
    *
-   * 강조 효과음이 너무 자주 나오는 것을
-   * 막기 위해 ±3%부터 이벤트로 처리한다.
+   * 5% 단위로 threshold를 나눈다.
+   *
+   * +5%   → 1
+   * +10%  → 2
+   * +15%  → 3
+   * +20%  → 4
+   * +25%  → 5
+   * +30%  → 6
+   *
+   * -5%   → -1
+   * -10%  → -2
+   * -15%  → -3
+   * -20%  → -4
+   * -25%  → -5
+   * -30%  → -6
    */
-  private getEventState(
-    changeRate: number
-  ): EventState {
-    if (changeRate >= 3) {
-      return "surge";
-    }
-
-    if (changeRate <= -3) {
-      return "drop";
-    }
-
-    return "normal";
-  }
-
-  /*
-   * =========================
-   * 상승 / 하락 / 보합
-   * =========================
-   */
-  private getDirection(
-    currentPrice: number,
-    previousPrice: number | null
-  ): Direction {
-    if (previousPrice === null) {
-      return "flat";
-    }
-
-    if (currentPrice > previousPrice) {
-      return "up";
-    }
-
-    if (currentPrice < previousPrice) {
-      return "down";
-    }
-
-    return "flat";
-  }
-
-  /*
-   * =========================
-   * 일반 체결음 음높이
-   * =========================
-   */
-  private getFrequency(
-    currentPrice: number,
-    previousPrice: number | null,
-    direction: Direction,
+  private getEventLevel(
     changeRate: number
   ): number {
-    const baseFrequency = 440;
-    const tickSize = 250;
-
-    if (
-      direction === "flat" ||
-      previousPrice === null
-    ) {
-      const baseline = Math.max(
-        -2,
-        Math.min(2, changeRate)
-      );
-
-      return (
-        baseFrequency *
-        Math.pow(2, baseline / 24)
-      );
+    if (changeRate >= 30) {
+      return 6;
     }
 
-    const priceDelta = Math.abs(
-      currentPrice - previousPrice
-    );
-
-    const tickCount = Math.max(
-      1,
-      Math.min(
-        4,
-        Math.round(
-          priceDelta / tickSize
-        )
-      )
-    );
-
-    const semitones = tickCount * 3;
-
-    if (direction === "up") {
-      return (
-        baseFrequency *
-        Math.pow(
-          2,
-          semitones / 12
-        )
-      );
+    if (changeRate >= 25) {
+      return 5;
     }
 
-    return (
-      baseFrequency *
-      Math.pow(
-        2,
-        -semitones / 12
-      )
-    );
+    if (changeRate >= 20) {
+      return 4;
+    }
+
+    if (changeRate >= 15) {
+      return 3;
+    }
+
+    if (changeRate >= 10) {
+      return 2;
+    }
+
+    if (changeRate >= 5) {
+      return 1;
+    }
+
+    if (changeRate <= -30) {
+      return -6;
+    }
+
+    if (changeRate <= -25) {
+      return -5;
+    }
+
+    if (changeRate <= -20) {
+      return -4;
+    }
+
+    if (changeRate <= -15) {
+      return -3;
+    }
+
+    if (changeRate <= -10) {
+      return -2;
+    }
+
+    if (changeRate <= -5) {
+      return -1;
+    }
+
+    return 0;
   }
 
   /*
    * =========================
    * 급등락 이벤트음
    * =========================
+   *
+   * level이 높을수록
+   * 강조 정도를 조금씩 높인다.
+   *
+   * 상승:
+   * +5%   → 2음
+   * +10%  → 3음
+   * +15%  → 3음
+   * +20%  → 4음
+   * +25%  → 4음
+   * +30%  → 5음
+   *
+   * 하락도 동일한 구조.
    */
   private playEventSound(
     context: AudioContext,
-    state: EventState
+    level: number
   ): void {
     const now = context.currentTime;
 
-    if (state === "surge") {
-      this.playEventPulse(
-        context,
-        now,
+    const magnitude =
+      Math.min(
+        6,
+        Math.abs(level)
+      );
+
+    const isSurge = level > 0;
+
+    /*
+     * level이 높아질수록
+     * 이벤트음의 음량을 조금 증가시킨다.
+     */
+    const eventVolume = Math.min(
+      0.4,
+      this.volume *
+        (1.05 + magnitude * 0.07)
+    );
+
+    /*
+     * 상승 이벤트음
+     */
+    if (isSurge) {
+      const frequencies = [
         660,
-        this.volume * 1.2
-      );
+        780,
+        920,
+        1080,
+        1260,
+      ];
 
-      this.playEventPulse(
-        context,
-        now + 0.12,
-        880,
-        this.volume * 1.3
-      );
+      const count =
+        magnitude >= 6
+          ? 5
+          : magnitude >= 4
+            ? 4
+            : magnitude >= 2
+              ? 3
+              : 2;
 
-      this.playEventPulse(
-        context,
-        now + 0.24,
-        1100,
-        this.volume * 1.4
-      );
+      for (
+        let i = 0;
+        i < count;
+        i += 1
+      ) {
+        this.playEventPulse(
+          context,
+          now + i * 0.12,
+          frequencies[i],
+          eventVolume
+        );
+      }
 
       return;
     }
 
-    if (state === "drop") {
-      this.playEventPulse(
-        context,
-        now,
-        440,
-        this.volume * 1.2
-      );
+    /*
+     * 하락 이벤트음
+     */
+    const frequencies = [
+      440,
+      370,
+      310,
+      260,
+      220,
+    ];
 
-      this.playEventPulse(
-        context,
-        now + 0.12,
-        330,
-        this.volume * 1.3
-      );
+    const count =
+      magnitude >= 6
+        ? 5
+        : magnitude >= 4
+          ? 4
+          : magnitude >= 2
+            ? 3
+            : 2;
 
+    for (
+      let i = 0;
+      i < count;
+      i += 1
+    ) {
       this.playEventPulse(
         context,
-        now + 0.24,
-        220,
-        this.volume * 1.4
+        now + i * 0.12,
+        frequencies[i],
+        eventVolume
       );
     }
   }
 
   /*
    * =========================
-   * 이벤트음
+   * 이벤트음 개별 Pulse
    * =========================
    */
   private playEventPulse(
@@ -379,7 +443,10 @@ export class Sonification {
     );
 
     gain.gain.exponentialRampToValueAtTime(
-      Math.max(0.001, volume),
+      Math.max(
+        0.001,
+        volume
+      ),
       startTime + 0.02
     );
 
@@ -393,9 +460,119 @@ export class Sonification {
       context.destination
     );
 
-    oscillator.start(startTime);
+    oscillator.start(
+      startTime
+    );
+
     oscillator.stop(
       startTime + 0.3
+    );
+  }
+
+  /*
+   * =========================
+   * 상승 / 하락 / 보합
+   * =========================
+   */
+  private getDirection(
+    currentPrice: number,
+    previousPrice: number | null
+  ): Direction {
+    if (previousPrice === null) {
+      return "flat";
+    }
+
+    if (
+      currentPrice >
+      previousPrice
+    ) {
+      return "up";
+    }
+
+    if (
+      currentPrice <
+      previousPrice
+    ) {
+      return "down";
+    }
+
+    return "flat";
+  }
+
+  /*
+   * =========================
+   * 일반 체결음 음높이
+   * =========================
+   */
+  private getFrequency(
+    currentPrice: number,
+    previousPrice: number | null,
+    direction: Direction,
+    changeRate: number
+  ): number {
+    const baseFrequency = 440;
+    const tickSize = 250;
+
+    if (
+      direction === "flat" ||
+      previousPrice === null
+    ) {
+      const baseline = Math.max(
+        -2,
+        Math.min(
+          2,
+          changeRate
+        )
+      );
+
+      return (
+        baseFrequency *
+        Math.pow(
+          2,
+          baseline / 24
+        )
+      );
+    }
+
+    const priceDelta =
+      Math.abs(
+        currentPrice -
+          previousPrice
+      );
+
+    const tickCount =
+      Math.max(
+        1,
+        Math.min(
+          4,
+          Math.round(
+            priceDelta /
+              tickSize
+          )
+        )
+      );
+
+    const semitones =
+      tickCount * 3;
+
+    if (
+      direction === "up"
+    ) {
+      return (
+        baseFrequency *
+        Math.pow(
+          2,
+          semitones / 12
+        )
+      );
+    }
+
+    return (
+      baseFrequency *
+      Math.pow(
+        2,
+        -semitones / 12
+      )
     );
   }
 
@@ -404,21 +581,25 @@ export class Sonification {
    * 거래량 → 일반 체결음 볼륨
    * =========================
    *
-   * 거래량 차이를 볼륨으로 크게 표현하지 않는다.
+   * 거래량에 따른 볼륨 차이는
+   * 크게 만들지 않는다.
    *
    * 거래량의 핵심 정보는
-   * 아래 roll sound가 담당한다.
+   * roll sound가 담당한다.
    */
   private getTradeVolume(
     tradeVolume: number
   ): number {
-    const safeVolume = Math.max(
-      1,
-      tradeVolume
-    );
+    const safeVolume =
+      Math.max(
+        1,
+        tradeVolume
+      );
 
     const logVolume =
-      Math.log10(safeVolume);
+      Math.log10(
+        safeVolume
+      );
 
     const normalized =
       Math.max(
@@ -429,10 +610,6 @@ export class Sonification {
         )
       );
 
-    /*
-     * 거래량에 따른 볼륨 차이를
-     * 이전보다 작게 만든다.
-     */
     const multiplier =
       0.65 +
       normalized * 0.25;
@@ -441,7 +618,8 @@ export class Sonification {
       0.4,
       Math.max(
         0.001,
-        this.volume * multiplier
+        this.volume *
+          multiplier
       )
     );
   }
@@ -451,29 +629,39 @@ export class Sonification {
    * 거래량 → 또르륵 발생 여부
    * =========================
    *
-   * 기존 최소 기준: 100
-   * 변경 최소 기준: 30
+   * 거래량 30 미만에서는
+   * 발생하지 않는다.
    */
   private shouldPlayRollSound(
     symbol: string,
     tradeVolume: number,
     currentTime: number
   ): boolean {
-    if (tradeVolume < 30) {
+    if (
+      tradeVolume < 30
+    ) {
       return false;
     }
 
     const lastTime =
-      this.lastRollTimes.get(symbol);
+      this.lastRollTimes.get(
+        symbol
+      );
 
-    if (lastTime === undefined) {
+    if (
+      lastTime === undefined
+    ) {
       return true;
     }
 
     const elapsed =
-      currentTime * 1000 - lastTime;
+      currentTime * 1000 -
+      lastTime;
 
-    return elapsed >= this.rollCooldown;
+    return (
+      elapsed >=
+      this.rollCooldown
+    );
   }
 
   /*
@@ -490,21 +678,32 @@ export class Sonification {
     tradeVolume: number
   ): number {
     const safeVolume =
-      Math.max(1, tradeVolume);
+      Math.max(
+        1,
+        tradeVolume
+      );
 
-    if (safeVolume >= 1000) {
+    if (
+      safeVolume >= 1000
+    ) {
       return 5;
     }
 
-    if (safeVolume >= 300) {
+    if (
+      safeVolume >= 300
+    ) {
       return 4;
     }
 
-    if (safeVolume >= 100) {
+    if (
+      safeVolume >= 100
+    ) {
       return 3;
     }
 
-    if (safeVolume >= 30) {
+    if (
+      safeVolume >= 30
+    ) {
       return 2;
     }
 
@@ -521,7 +720,7 @@ export class Sonification {
    *
    * 상승 → 점점 높은 음
    * 하락 → 점점 낮은 음
-   * 보합 → 같은 방향의 짧은 패턴
+   * 보합 → 짧은 패턴
    */
   private playRollSound(
     context: AudioContext,
@@ -538,17 +737,26 @@ export class Sonification {
           ? 420
           : 520;
 
-    for (let i = 0; i < count; i += 1) {
-      let frequency = baseFrequency;
+    for (
+      let i = 0;
+      i < count;
+      i += 1
+    ) {
+      let frequency =
+        baseFrequency;
 
-      if (direction === "up") {
+      if (
+        direction === "up"
+      ) {
         frequency =
           baseFrequency *
           Math.pow(
             2,
             (i * 2) / 12
           );
-      } else if (direction === "down") {
+      } else if (
+        direction === "down"
+      ) {
         frequency =
           baseFrequency *
           Math.pow(
@@ -557,11 +765,13 @@ export class Sonification {
           );
       } else {
         /*
-         * 보합에서는 살짝 위아래로 움직여
-         * 단순 반복음과 구분한다.
+         * 보합에서는 살짝 위아래로
+         * 움직여 단순 반복음과 구분한다.
          */
         const offset =
-          i % 2 === 0 ? 0 : 1;
+          i % 2 === 0
+            ? 0
+            : 1;
 
         frequency =
           baseFrequency *
@@ -573,7 +783,8 @@ export class Sonification {
 
       this.playRollPulse(
         context,
-        startTime + i * gap,
+        startTime +
+          i * gap,
         frequency,
         this.volume * 0.65
       );
@@ -610,7 +821,10 @@ export class Sonification {
     );
 
     gain.gain.exponentialRampToValueAtTime(
-      Math.max(0.001, volume),
+      Math.max(
+        0.001,
+        volume
+      ),
       startTime + 0.008
     );
 
@@ -624,7 +838,10 @@ export class Sonification {
       context.destination
     );
 
-    oscillator.start(startTime);
+    oscillator.start(
+      startTime
+    );
+
     oscillator.stop(
       startTime + 0.05
     );
@@ -660,7 +877,10 @@ export class Sonification {
     );
 
     gain.gain.exponentialRampToValueAtTime(
-      Math.max(0.001, volume),
+      Math.max(
+        0.001,
+        volume
+      ),
       startTime + 0.012
     );
 
@@ -674,7 +894,10 @@ export class Sonification {
       context.destination
     );
 
-    oscillator.start(startTime);
+    oscillator.start(
+      startTime
+    );
+
     oscillator.stop(
       startTime + 0.12
     );
@@ -696,7 +919,10 @@ export class Sonification {
     const context =
       this.getAudioContext();
 
-    if (context.state === "suspended") {
+    if (
+      context.state ===
+      "suspended"
+    ) {
       void context.resume();
     }
 
