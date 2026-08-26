@@ -1,408 +1,519 @@
-export interface TradeData {
-  currentPrice: number;
-  changeRate: number;
-  tradeVolume: number;
-  tradeStrength?: number;
-}
+import type { RealtimeTrade } from "../types";
+
+type Direction = "up" | "down" | "flat";
+type EventState = "normal" | "surge" | "drop";
 
 export class Sonification {
-  private audioContext: AudioContext;
-  private masterGain: GainNode;
-
-  private enabled = true;
+  private audioContext: AudioContext | null = null;
+  private muted = false;
   private volume = 0.15;
 
-  // 이벤트음이 너무 자주 발생하지 않도록 cooldown
-  private lastEventTime = 0;
-  private readonly EVENT_COOLDOWN = 1000;
+  // 종목별 이전 가격
+  private previousPrices = new Map<string, number>();
 
-  // C4 ~ C5의 C major scale
-  // 도 레 미 파 솔 라 시 도
-  private readonly scale = [
-    261.63,
-    293.66,
-    329.63,
-    349.23,
-    392.0,
-    440.0,
-    493.88,
-    523.25,
-  ];
+  // 종목별 급등락 상태
+  private eventStates = new Map<string, EventState>();
 
-  constructor() {
-    this.audioContext = new AudioContext();
-
-    this.masterGain = this.audioContext.createGain();
-    this.masterGain.gain.value = this.volume;
-
-    this.masterGain.connect(this.audioContext.destination);
+  setMuted(muted: boolean): void {
+    this.muted = muted;
   }
 
-  setEnabled(enabled: boolean) {
-    this.enabled = enabled;
+  setVolume(volume: number): void {
+    this.volume = Math.min(0.4, Math.max(0, volume));
   }
 
-  setMuted(muted: boolean) {
-    this.masterGain.gain.value = muted ? 0 : this.volume;
-  }
-
-  setVolume(volume: number) {
-    this.volume = Math.max(0, Math.min(1, volume));
-    this.masterGain.gain.value = this.volume;
-  }
-
-  /**
-   * 실시간 체결 데이터를 소리로 변환
-   */
-  playTrade(trade: TradeData) {
-    if (!this.enabled) return;
-
-    if (this.audioContext.state === "suspended") {
-      void this.audioContext.resume();
+  playTrade(trade: RealtimeTrade): void {
+    if (
+      this.muted ||
+      !Number.isFinite(trade.currentPrice)
+    ) {
+      return;
     }
 
-    const frequency = this.getFrequency(trade.changeRate);
-    const volume = this.getTradeVolume(trade.tradeVolume);
+    const context = this.getAudioContext();
 
-    // 일반 체결음
-    this.playTone(frequency, volume);
+    if (context.state === "suspended") {
+      void context.resume();
+    }
 
-    // 특정 이벤트 발생 여부 확인
-    this.checkEvent(trade);
-  }
+    const symbol = trade.symbol;
 
-  /**
-   * ========================================
-   * 1 + 2. 등락률 → 비선형 매핑 → 음계
-   * ========================================
-   *
-   * 작은 등락률의 차이가 잘 들리도록
-   * 중심 구간(-0.5% ~ +0.5%)을 확대한다.
-   *
-   * 이후 연속적인 주파수가 아니라
-   * C major scale의 음계로 양자화한다.
-   */
-  private getFrequency(changeRate: number): number {
-    // 지나치게 큰 값은 제한
-    const MIN_RATE = -10;
-    const MAX_RATE = 10;
+    /*
+     * =========================
+     * 1. 종목별 이전 가격 가져오기
+     * =========================
+     */
+    const previousPrice =
+      this.previousPrices.get(symbol) ?? null;
 
-    const clampedRate = Math.max(
-      MIN_RATE,
-      Math.min(MAX_RATE, changeRate)
+    /*
+     * =========================
+     * 2. 종목별 급등락 상태 확인
+     * =========================
+     */
+    const nextEventState =
+      this.getEventState(trade.changeRate);
+
+    const previousEventState =
+      this.eventStates.get(symbol) ?? "normal";
+
+    /*
+     * 해당 종목이
+     *
+     * normal → surge
+     * normal → drop
+     *
+     * 으로 진입할 때만 이벤트음 발생
+     */
+    if (
+      nextEventState !== "normal" &&
+      nextEventState !== previousEventState
+    ) {
+      this.playEventSound(
+        context,
+        nextEventState
+      );
+    }
+
+    // 종목별 상태 저장
+    this.eventStates.set(
+      symbol,
+      nextEventState
     );
 
     /*
-     * tanh를 이용한 비선형 매핑
-     *
-     * 0 근처:
-     *   작은 변화에도 큰 차이가 발생
-     *
-     * 양 끝:
-     *   변화가 완만해짐
+     * =========================
+     * 3. 일반 체결음
+     * =========================
      */
-    const nonlinear = Math.tanh(clampedRate / 1.0);
-
-    // -1 ~ +1 → 0 ~ 1
-    const normalized = (nonlinear + 1) / 2;
-
-    // 0 ~ 1 → 음계 index
-    const index = Math.round(
-      normalized * (this.scale.length - 1)
+    const direction = this.getDirection(
+      trade.currentPrice,
+      previousPrice
     );
 
-    return this.scale[index] ?? 261.63;
-  }
-
-  /**
-   * ========================================
-   * 3. 거래량 → 음량
-   * ========================================
-   *
-   * 거래량의 범위가 매우 크기 때문에
-   * log10으로 압축한다.
-   */
-  private getTradeVolume(tradeVolume: number): number {
-    const MIN_VOLUME = 1;
-    const MAX_VOLUME = 100000;
-
-    const clampedVolume = Math.max(
-      MIN_VOLUME,
-      Math.min(MAX_VOLUME, tradeVolume)
+    const frequency = this.getFrequency(
+      trade.currentPrice,
+      previousPrice,
+      direction,
+      trade.changeRate
     );
 
-    const normalized =
-      Math.log10(clampedVolume) /
-      Math.log10(MAX_VOLUME);
+    const volumeLevel =
+      this.getTradeVolume(
+        trade.tradeVolume
+      );
+
+    const pulseCount =
+      this.getPulseCount(
+        trade.tradeVolume
+      );
 
     /*
-     * 너무 작은 거래량도 완전히 안 들리지 않도록
-     * 최소 볼륨을 확보한다.
+     * 현재 가격을 해당 종목의
+     * 이전 가격으로 저장
      */
-    const MIN_GAIN = 0.02;
-    const MAX_GAIN = 0.25;
+    this.previousPrices.set(
+      symbol,
+      trade.currentPrice
+    );
+
+    const now = context.currentTime;
+    const pulseGap = 0.055;
+
+    /*
+     * 거래량이 클수록 pulse 증가
+     */
+    for (
+      let i = 0;
+      i < pulseCount;
+      i += 1
+    ) {
+      this.playPulse(
+        context,
+        now + i * pulseGap,
+        frequency,
+        volumeLevel
+      );
+    }
+  }
+
+  /*
+   * =========================
+   * 급등락 상태
+   * =========================
+   */
+  private getEventState(
+    changeRate: number
+  ): EventState {
+    if (changeRate >= 2) {
+      return "surge";
+    }
+
+    if (changeRate <= -2) {
+      return "drop";
+    }
+
+    return "normal";
+  }
+
+  /*
+   * =========================
+   * 상승 / 하락 / 보합
+   * =========================
+   */
+  private getDirection(
+    currentPrice: number,
+    previousPrice: number | null
+  ): Direction {
+    if (previousPrice === null) {
+      return "flat";
+    }
+
+    if (currentPrice > previousPrice) {
+      return "up";
+    }
+
+    if (currentPrice < previousPrice) {
+      return "down";
+    }
+
+    return "flat";
+  }
+
+  /*
+   * =========================
+   * 일반 체결음 음높이
+   * =========================
+   */
+  private getFrequency(
+    currentPrice: number,
+    previousPrice: number | null,
+    direction: Direction,
+    changeRate: number
+  ): number {
+    const baseFrequency = 440;
+    const tickSize = 250;
+
+    if (
+      direction === "flat" ||
+      previousPrice === null
+    ) {
+      const baseline = Math.max(
+        -2,
+        Math.min(2, changeRate)
+      );
+
+      return (
+        baseFrequency *
+        Math.pow(2, baseline / 24)
+      );
+    }
+
+    const priceDelta = Math.abs(
+      currentPrice - previousPrice
+    );
+
+    const tickCount = Math.max(
+      1,
+      Math.min(
+        4,
+        Math.round(
+          priceDelta / tickSize
+        )
+      )
+    );
+
+    const semitones = tickCount * 3;
+
+    if (direction === "up") {
+      return (
+        baseFrequency *
+        Math.pow(
+          2,
+          semitones / 12
+        )
+      );
+    }
 
     return (
-      MIN_GAIN +
-      normalized * (MAX_GAIN - MIN_GAIN)
+      baseFrequency *
+      Math.pow(
+        2,
+        -semitones / 12
+      )
     );
   }
 
-  /**
-   * ========================================
-   * 일반 체결음
-   * ========================================
+  /*
+   * =========================
+   * 급등 이벤트음
+   * =========================
    */
-  private playTone(
+  private playEventSound(
+    context: AudioContext,
+    state: EventState
+  ): void {
+    const now = context.currentTime;
+
+    if (state === "surge") {
+      this.playEventPulse(
+        context,
+        now,
+        660,
+        this.volume * 1.2
+      );
+
+      this.playEventPulse(
+        context,
+        now + 0.12,
+        880,
+        this.volume * 1.3
+      );
+
+      this.playEventPulse(
+        context,
+        now + 0.24,
+        1100,
+        this.volume * 1.4
+      );
+
+      return;
+    }
+
+    if (state === "drop") {
+      this.playEventPulse(
+        context,
+        now,
+        440,
+        this.volume * 1.2
+      );
+
+      this.playEventPulse(
+        context,
+        now + 0.12,
+        330,
+        this.volume * 1.3
+      );
+
+      this.playEventPulse(
+        context,
+        now + 0.24,
+        220,
+        this.volume * 1.4
+      );
+    }
+  }
+
+  /*
+   * =========================
+   * 이벤트음
+   * =========================
+   */
+  private playEventPulse(
+    context: AudioContext,
+    startTime: number,
     frequency: number,
     volume: number
-  ) {
-    const now = this.audioContext.currentTime;
-
+  ): void {
     const oscillator =
-      this.audioContext.createOscillator();
+      context.createOscillator();
 
     const gain =
-      this.audioContext.createGain();
+      context.createGain();
 
-    oscillator.type = "sine";
+    oscillator.type = "triangle";
+
     oscillator.frequency.setValueAtTime(
       frequency,
-      now
+      startTime
     );
 
-    /*
-     * Attack / Release
-     *
-     * 짧은 체결음이지만 click noise가
-     * 발생하지 않도록 smoothing
-     */
     gain.gain.setValueAtTime(
       0.001,
-      now
+      startTime
     );
 
     gain.gain.exponentialRampToValueAtTime(
-      volume,
-      now + 0.015
+      Math.max(0.001, volume),
+      startTime + 0.02
     );
 
     gain.gain.exponentialRampToValueAtTime(
       0.001,
-      now + 0.12
+      startTime + 0.28
     );
 
     oscillator.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(
+      context.destination
+    );
 
-    oscillator.start(now);
-    oscillator.stop(now + 0.13);
+    oscillator.start(startTime);
+    oscillator.stop(
+      startTime + 0.3
+    );
   }
 
-  /**
-   * ========================================
-   * 5. 이벤트음
-   * ========================================
-   *
-   * 일반 체결음과 구분되는 패턴을 재생한다.
-   *
-   * 이벤트 조건:
-   *
-   * 1. 등락률 ±2% 이상
-   * 2. 체결강도 200% 이상
+  /*
+   * =========================
+   * 거래량 → 볼륨
+   * =========================
    */
-  private checkEvent(trade: TradeData) {
-    const now = Date.now();
+  private getTradeVolume(
+    tradeVolume: number
+  ): number {
+    const safeVolume = Math.max(
+      1,
+      tradeVolume
+    );
 
-    // 이벤트가 너무 자주 발생하지 않도록 제한
-    if (
-      now - this.lastEventTime <
-      this.EVENT_COOLDOWN
-    ) {
-      return;
-    }
+    const logVolume =
+      Math.log10(safeVolume);
 
-    // 급등
-    if (trade.changeRate >= 2) {
-      this.playEventSound("up");
-      this.lastEventTime = now;
-      return;
-    }
+    const normalized =
+      Math.max(
+        0,
+        Math.min(
+          1,
+          logVolume / 4
+        )
+      );
 
-    // 급락
-    if (trade.changeRate <= -2) {
-      this.playEventSound("down");
-      this.lastEventTime = now;
-      return;
-    }
+    const multiplier =
+      0.55 +
+      normalized * 0.45;
 
-    // 체결강도 200% 이상
-    if (
-      trade.tradeStrength !== undefined &&
-      trade.tradeStrength >= 200
-    ) {
-      this.playEventSound("strength");
-      this.lastEventTime = now;
-    }
+    return Math.min(
+      0.4,
+      Math.max(
+        0.001,
+        this.volume * multiplier
+      )
+    );
   }
 
-  /**
-   * 이벤트 패턴음
+  /*
+   * =========================
+   * 거래량 → pulse 횟수
+   * =========================
    */
-  private playEventSound(
-    type: "up" | "down" | "strength"
-  ) {
-    const now = this.audioContext.currentTime;
+  private getPulseCount(
+    tradeVolume: number
+  ): number {
+    const safeVolume =
+      Math.max(1, tradeVolume);
 
-    let notes: number[];
-
-    switch (type) {
-      case "up":
-        // 상승: 도 → 미 → 솔
-        notes = [
-          523.25,
-          659.25,
-          783.99,
-        ];
-        break;
-
-      case "down":
-        // 하락: 솔 → 미 → 도
-        notes = [
-          392.0,
-          329.63,
-          261.63,
-        ];
-        break;
-
-      case "strength":
-        // 체결강도: 짧은 반복음
-        notes = [
-          659.25,
-          659.25,
-        ];
-        break;
+    if (safeVolume >= 2000) {
+      return 4;
     }
 
-    notes.forEach((frequency, index) => {
-      const oscillator =
-        this.audioContext.createOscillator();
+    if (safeVolume >= 500) {
+      return 3;
+    }
 
-      const gain =
-        this.audioContext.createGain();
+    if (safeVolume >= 100) {
+      return 2;
+    }
 
-      const startTime =
-        now + index * 0.08;
-
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(
-        frequency,
-        startTime
-      );
-
-      gain.gain.setValueAtTime(
-        0.001,
-        startTime
-      );
-
-      gain.gain.exponentialRampToValueAtTime(
-        0.12,
-        startTime + 0.01
-      );
-
-      gain.gain.exponentialRampToValueAtTime(
-        0.001,
-        startTime + 0.07
-      );
-
-      oscillator.connect(gain);
-      gain.connect(this.masterGain);
-
-      oscillator.start(startTime);
-      oscillator.stop(startTime + 0.08);
-    });
+    return 1;
   }
 
-  /**
-   * ========================================
+  /*
+   * =========================
+   * 일반 체결음
+   * =========================
+   */
+  private playPulse(
+    context: AudioContext,
+    startTime: number,
+    frequency: number,
+    volume: number
+  ): void {
+    const oscillator =
+      context.createOscillator();
+
+    const gain =
+      context.createGain();
+
+    oscillator.type = "sine";
+
+    oscillator.frequency.setValueAtTime(
+      frequency,
+      startTime
+    );
+
+    gain.gain.setValueAtTime(
+      0.001,
+      startTime
+    );
+
+    gain.gain.exponentialRampToValueAtTime(
+      Math.max(0.001, volume),
+      startTime + 0.012
+    );
+
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      startTime + 0.11
+    );
+
+    oscillator.connect(gain);
+    gain.connect(
+      context.destination
+    );
+
+    oscillator.start(startTime);
+    oscillator.stop(
+      startTime + 0.12
+    );
+  }
+
+  /*
+   * =========================
    * 테스트용 샘플
-   * ========================================
+   * =========================
    */
   playSample(
-  type:
-    | "up"
-    | "down"
-    | "flat"
-    | "small-volume"
-    | "large-volume"
-    | "event",
-  sampleVolume?: "low" | "high"
-) {
-  if (!this.enabled) return;
+    direction: Direction,
+    volume: "low" | "high" = "low"
+  ): void {
+    if (this.muted) {
+      return;
+    }
 
-  if (this.audioContext.state === "suspended") {
-    void this.audioContext.resume();
+    const context =
+      this.getAudioContext();
+
+    if (context.state === "suspended") {
+      void context.resume();
+    }
+
+    const frequency =
+      direction === "up"
+        ? 660
+        : direction === "down"
+          ? 330
+          : 440;
+
+    const volumeLevel =
+      volume === "high"
+        ? this.volume
+        : this.volume * 0.45;
+
+    this.playPulse(
+      context,
+      context.currentTime,
+      frequency,
+      volumeLevel
+    );
   }
 
-  if (type === "flat" && sampleVolume !== undefined) {
-  const volume = sampleVolume === "high" ? 0.2 : 0.04;
+  private getAudioContext(): AudioContext {
+    if (!this.audioContext) {
+      this.audioContext =
+        new AudioContext();
+    }
 
-  this.playTone(
-    this.getFrequency(0),
-    volume
-  );
-
-  return;
-}
-
-  switch (type) {
-    case "up":
-      this.playTrade({
-        currentPrice: 100000,
-        changeRate: 3,
-        tradeVolume: 50000,
-      });
-      break;
-
-    case "down":
-      this.playTrade({
-        currentPrice: 100000,
-        changeRate: -3,
-        tradeVolume: 50000,
-      });
-      break;
-
-    case "flat":
-      this.playTrade({
-        currentPrice: 100000,
-        changeRate: 0,
-        tradeVolume: 50000,
-      });
-      break;
-
-    case "small-volume":
-      this.playTrade({
-        currentPrice: 100000,
-        changeRate: 0.3,
-        tradeVolume: 10,
-      });
-      break;
-
-    case "large-volume":
-      this.playTrade({
-        currentPrice: 100000,
-        changeRate: 0.3,
-        tradeVolume: 100000,
-      });
-      break;
-
-    case "event":
-      this.playTrade({
-        currentPrice: 100000,
-        changeRate: 2.5,
-        tradeVolume: 50000,
-      });
-      break;
+    return this.audioContext;
   }
-}
 }
