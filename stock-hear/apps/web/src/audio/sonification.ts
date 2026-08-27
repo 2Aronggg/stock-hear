@@ -371,7 +371,7 @@ export class Sonification {
         this.playEventPulse(
           context,
           now + i * 0.12,
-          frequencies[i],
+          frequencies[i]!,
           eventVolume
         );
       }
@@ -407,7 +407,7 @@ export class Sonification {
       this.playEventPulse(
         context,
         now + i * 0.12,
-        frequencies[i],
+        frequencies[i]!,
         eventVolume
       );
     }
