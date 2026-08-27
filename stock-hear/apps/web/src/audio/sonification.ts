@@ -1,10 +1,17 @@
-import type { RealtimeTrade } from "../types";
+import type { ListeningPreferences, RealtimeTrade, SoundEventLog } from "../types";
 
 export class Sonification {
   private audioContext: AudioContext | null = null;
 
   private muted = false;
   private volume = 0.15;
+  private preferences: ListeningPreferences = {
+    mode: "price-volume",
+    speed: "normal",
+    includeVolume: true,
+    thresholdRate: null,
+    speechDetailLevel: "medium"
+  };
 
   setMuted(muted: boolean): void {
     this.muted = muted;
@@ -14,7 +21,11 @@ export class Sonification {
     this.volume = Math.min(0.4, Math.max(0, volume));
   }
 
-  playTrade(trade: RealtimeTrade): void {
+  setPreferences(preferences: ListeningPreferences): void {
+    this.preferences = preferences;
+  }
+
+  playTrade(trade: RealtimeTrade, stockName = trade.stockName ?? trade.symbol): SoundEventLog | null {
     console.log(
       "[SONIFICATION]",
       "등락률:",
@@ -25,8 +36,18 @@ export class Sonification {
       trade.currentPrice
     );
 
+    if (
+      this.preferences.mode === "alerts-only" &&
+      this.preferences.thresholdRate !== null &&
+      Math.abs(trade.changeRate) < this.preferences.thresholdRate
+    ) {
+      return null;
+    }
+
+    const soundEvent = this.createSoundEvent(trade, stockName);
+
     if (this.muted) {
-      return;
+      return soundEvent;
     }
 
     const context = this.getAudioContext();
@@ -42,13 +63,15 @@ export class Sonification {
     const frequency = this.getFrequency(trade.changeRate);
 
     // 체결량 → 음량
-    const volume = this.getTradeVolume(trade.tradeVolume);
+    const volume = this.preferences.includeVolume
+      ? this.getTradeVolume(trade.tradeVolume)
+      : this.volume;
 
     oscillator.type = "sine";
     oscillator.frequency.value = frequency;
 
     const now = context.currentTime;
-    const duration = 0.12;
+    const duration = this.getDuration();
 
     // 갑작스러운 음량 변화로 인한 클릭 노이즈 방지
     gain.gain.setValueAtTime(0.001, now);
@@ -68,6 +91,8 @@ export class Sonification {
 
     oscillator.start(now);
     oscillator.stop(now + duration);
+
+    return soundEvent;
   }
 
   playSample(
@@ -103,7 +128,7 @@ export class Sonification {
       receivedAt: new Date().toISOString()
     };
 
-    this.playTrade(sampleTrade);
+    this.playTrade(sampleTrade, "샘플");
   }
 
   /**
@@ -125,6 +150,18 @@ export class Sonification {
     );
 
     return 440 + clampedRate * 25;
+  }
+
+  private getDuration(): number {
+    if (this.preferences.speed === "slow") {
+      return 0.24;
+    }
+
+    if (this.preferences.speed === "fast") {
+      return 0.08;
+    }
+
+    return 0.12;
   }
 
   /**
@@ -161,5 +198,32 @@ export class Sonification {
     this.audioContext ??= new AudioContext();
 
     return this.audioContext;
+  }
+
+  private createSoundEvent(trade: RealtimeTrade, stockName: string): SoundEventLog {
+    const soundEvent =
+      trade.changeRate > 0
+        ? "PRICE_UP"
+        : trade.changeRate < 0
+          ? "PRICE_DOWN"
+          : "PRICE_FLAT";
+
+    return {
+      soundEvent,
+      symbol: trade.symbol,
+      stockName,
+      createdAt: new Date().toISOString(),
+      sourceData: {
+        currentPrice: trade.currentPrice,
+        changePrice: trade.changePrice,
+        changeRate: trade.changeRate,
+        tradeVolume: trade.tradeVolume
+      },
+      mapping: {
+        pitch: "priceDirection",
+        volume: this.preferences.includeVolume ? "tradeVolume" : "fixed",
+        tempo: this.preferences.speed
+      }
+    };
   }
 }

@@ -3,30 +3,92 @@ import { MarketSocket } from "./api/marketSocket";
 import { Sonification } from "./audio/sonification";
 import { AudioControls } from "./components/AudioControls";
 import { MarketDisplay } from "./components/MarketDisplay";
-import { StockSelector } from "./components/StockSelector";
+import { getStockName, isSupportedSymbol, StockSelector } from "./components/StockSelector";
 import { VoiceControls } from "./components/VoiceControls";
-import type { ConnectionStatus, RealtimeTrade, ServerSocketMessage } from "./types";
+import type {
+  ConnectionStatus,
+  ListeningPreferences,
+  RealtimeTrade,
+  ServerSocketMessage,
+  SoundEventLog
+} from "./types";
 
 const websocketUrl = import.meta.env.VITE_WEBSOCKET_URL ?? "ws://localhost:4000/ws";
 
+const selectedSymbolStorageKey = "stock-hear:selected-symbol";
+const defaultSymbol = "005930";
+const soundEnabledStorageKey = "stock-hear:sound-enabled";
+const recentTradesWindowMs = 5 * 60 * 1000;
+
+const defaultPreferences: ListeningPreferences = {
+  mode: "price-volume",
+  speed: "normal",
+  includeVolume: true,
+  thresholdRate: null,
+  speechDetailLevel: "medium"
+};
+
+const getInitialSymbol = (): string => {
+  const savedSymbol = window.localStorage.getItem(selectedSymbolStorageKey);
+
+  return savedSymbol && isSupportedSymbol(savedSymbol)
+    ? savedSymbol
+    : defaultSymbol;
+};
+
+const getInitialSoundEnabled = (): boolean =>
+  window.localStorage.getItem(soundEnabledStorageKey) === "true";
+
+const iconBadges = [
+  {
+    label: "음성 명령 입력",
+    className: "badge-mic",
+    path: "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3Zm-6 8a6 6 0 0 0 12 0m-6 6v3m-4 0h8"
+  },
+  {
+    label: "소리 안내",
+    className: "badge-speaker",
+    path: "M5 9v6h4l5 4V5L9 9H5Zm12 1a4 4 0 0 1 0 4m2-7a8 8 0 0 1 0 10"
+  },
+  {
+    label: "실시간 체결가",
+    className: "badge-chart",
+    path: "M4 18h16M6 15l3-4 3 2 5-7m0 0h-4m4 0v4"
+  },
+  {
+    label: "급등 급락 알림",
+    className: "badge-bell",
+    path: "M18 16H6l1.5-2V10a4.5 4.5 0 0 1 9 0v4L18 16Zm-8 3h4"
+  },
+  {
+    label: "청취 모드",
+    className: "badge-headphone",
+    path: "M4 13a8 8 0 0 1 16 0v4a2 2 0 0 1-2 2h-2v-6h4M4 13v4a2 2 0 0 0 2 2h2v-6H4"
+  }
+];
+
 export const App = () => {
-  const [symbol, setSymbol] = useState("005930");
+  const [symbol, setSymbol] = useState(getInitialSymbol);
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [latestTrade, setLatestTrade] = useState<RealtimeTrade | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(getInitialSoundEnabled);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.15);
+  const [preferences, setPreferences] = useState<ListeningPreferences>(defaultPreferences);
+  const [lastSoundEvent, setLastSoundEvent] = useState<SoundEventLog | null>(null);
   const sonification = useMemo(() => new Sonification(), []);
   const socketRef = useRef<MarketSocket | null>(null);
   const soundEnabledRef = useRef(soundEnabled);
+  const recentTradesRef = useRef<Array<{ trade: RealtimeTrade; receivedAtMs: number }>>([]);
 
   useEffect(() => {
     sonification.setMuted(muted || !soundEnabled);
     sonification.setVolume(volume);
-  }, [muted, sonification, soundEnabled, volume]);
+    sonification.setPreferences(preferences);
+  }, [muted, preferences, sonification, soundEnabled, volume]);
 
   useEffect(() => {
-  soundEnabledRef.current = soundEnabled;
+    soundEnabledRef.current = soundEnabled;
   }, [soundEnabled]);
 
   useEffect(() => {
@@ -37,8 +99,20 @@ export const App = () => {
       onMessage: (message: ServerSocketMessage) => {
         if (message.type === "trade") {
           setLatestTrade(message.trade);
+
+          const receivedAtMs = Date.now();
+          const cutoff = receivedAtMs - recentTradesWindowMs;
+
+          recentTradesRef.current = [
+            ...recentTradesRef.current.filter((entry) => entry.receivedAtMs >= cutoff),
+            { trade: message.trade, receivedAtMs }
+          ];
+
           if (soundEnabledRef.current) {
-            sonification.playTrade(message.trade);
+            const soundEvent = sonification.playTrade(message.trade, getStockName(symbol));
+            if (soundEvent) {
+              setLastSoundEvent(soundEvent);
+            }
           }
         }
       }
@@ -47,12 +121,90 @@ export const App = () => {
     socketRef.current = socket;
     socket.connect();
     return () => socket.disconnect();
-  }, [sonification]);
-  
+  }, [sonification, symbol]);
+
   const handleSymbolChange = (nextSymbol: string): void => {
-    socketRef.current?.unsubscribe(symbol);
-    socketRef.current?.subscribe(nextSymbol);
+    if (nextSymbol === symbol || !isSupportedSymbol(nextSymbol)) {
+      return;
+    }
+
+    window.localStorage.setItem(selectedSymbolStorageKey, nextSymbol);
+    setLatestTrade(null);
+    recentTradesRef.current = [];
     setSymbol(nextSymbol);
+  };
+
+  const handleSoundEnabledChange = (enabled: boolean): void => {
+    window.localStorage.setItem(soundEnabledStorageKey, String(enabled));
+
+    soundEnabledRef.current = enabled;
+    setSoundEnabled(enabled);
+  };
+
+  const handlePreferencesChange = (nextPreferences: ListeningPreferences): void => {
+    sonification.setPreferences(nextPreferences);
+    setPreferences(nextPreferences);
+  };
+
+  const handlePlayCurrentTrade = (nextPreferences: ListeningPreferences): boolean => {
+    if (!latestTrade) {
+      return false;
+    }
+
+    sonification.setPreferences(nextPreferences);
+    const soundEvent = sonification.playTrade(latestTrade, getStockName(symbol));
+
+    if (soundEvent) {
+      setLastSoundEvent(soundEvent);
+    }
+
+    return Boolean(soundEvent);
+  };
+
+  // "방금 움직임 다시 들려줘" — 가장 최근 소리 이벤트를 그대로 다시 재생한다.
+  // AI는 무엇을 재생할지만 고르고, 소리 자체는 항상 기존 엔진(sonification)이 만든다.
+  const handleReplayLast = (): boolean => {
+    if (!lastSoundEvent) {
+      return false;
+    }
+
+    const syntheticTrade: RealtimeTrade = {
+      symbol: lastSoundEvent.symbol,
+      stockName: lastSoundEvent.stockName,
+      tradeTime: latestTrade?.tradeTime ?? "",
+      currentPrice: lastSoundEvent.sourceData.currentPrice,
+      changePrice: lastSoundEvent.sourceData.changePrice,
+      changeRate: lastSoundEvent.sourceData.changeRate,
+      tradeVolume: lastSoundEvent.sourceData.tradeVolume,
+      accumulatedVolume: latestTrade?.accumulatedVolume ?? 0
+    };
+
+    const soundEvent = sonification.playTrade(syntheticTrade, lastSoundEvent.stockName);
+
+    if (soundEvent) {
+      setLastSoundEvent(soundEvent);
+    }
+
+    return Boolean(soundEvent);
+  };
+
+  // "최근 1분을 들려줘" — 최근 수신한 체결 데이터를 순서대로 다시 재생한다.
+  // 재생 목록만 AI가 고르고, 각 음의 높낮이/길이는 기존 엔진 규칙 그대로 따른다.
+  const handleReplayRecent = (windowSeconds: number): number => {
+    const cutoff = Date.now() - windowSeconds * 1000;
+    const entries = recentTradesRef.current.filter((entry) => entry.receivedAtMs >= cutoff);
+
+    entries.forEach((entry, index) => {
+      window.setTimeout(() => {
+        const soundEvent = sonification.playTrade(entry.trade, getStockName(symbol));
+
+        if (soundEvent) {
+          setLastSoundEvent(soundEvent);
+        }
+      }, index * 180);
+    });
+
+    return entries.length;
   };
 
   return (
@@ -61,35 +213,82 @@ export const App = () => {
         본문으로 바로가기
       </a>
       <div id="live-region" className="sr-only" aria-live="polite" aria-atomic="true">
-        {status === "connected" ? "서버에 연결되었습니다." : ""}
+        {status === "connected"
+          ? "서버에 연결되었습니다."
+          : status === "error"
+            ? "서버 연결에 실패했습니다."
+            : status === "disconnected"
+              ? "서버 연결이 끊어졌습니다."
+              : ""}
       </div>
       <main id="main-content" className="page">
         <div className="shell">
           <header className="hero">
-            <h1>stock-hear</h1>
-            <p>
-              국내 주식 실시간 체결 정보를 소리와 음성 안내로 전달하기 위한 접근성 우선 MVP입니다.
-            </p>
+            <div className="hero-copy">
+              <p className="eyebrow">시각 장애인을 위한</p>
+              <h1>
+                주식 정보를 <span>듣는</span> AI Stock - Hear
+              </h1>
+              <p>
+                시각장애인이 화면을 보지 않고 음성으로 종목과 청취 조건을 설정하고, 실시간 체결
+                흐름을 소리와 음성 안내로 직관적으로 확인할 수 있는 AI 기반 주식 접근성
+                인터페이스입니다.
+              </p>
+            </div>
+            <div className="hero-stage">
+              <div className="floating-badges" aria-hidden="true">
+                {iconBadges.map((badge) => (
+                  <span className={`icon-badge ${badge.className}`} key={badge.label}>
+                    <svg viewBox="0 0 24 24" role="img" aria-label={badge.label}>
+                      <path d={badge.path} />
+                    </svg>
+                  </span>
+                ))}
+              </div>
+              <div className="hero-status" aria-label="현재 선택 종목">
+                <span>현재 청취 종목</span>
+                <strong>{getStockName(symbol)}</strong>
+                <small>{symbol}</small>
+              </div>
+            </div>
           </header>
 
-          <div className="grid">
+          <MarketDisplay status={status} trade={latestTrade} />
+
+          <div className="grid grid-secondary">
             <StockSelector symbol={symbol} onSymbolChange={handleSymbolChange} />
-            <MarketDisplay status={status} trade={latestTrade} />
             <AudioControls
               enabled={soundEnabled}
               muted={muted}
               volume={volume}
-              onEnabledChange={setSoundEnabled}
+              onEnabledChange={handleSoundEnabledChange}
               onMutedChange={setMuted}
               onVolumeChange={setVolume}
               onSample={(direction) => sonification.playSample(direction)}
-              onVolumeSample={(volume) => sonification.playSample("flat", volume)}
+              onVolumeSample={(sampleVolume) => sonification.playSample("flat", sampleVolume)}
             />
-            <VoiceControls trade={latestTrade} onSoundEnabledChange={setSoundEnabled} />
+            <VoiceControls
+              currentSymbol={symbol}
+              preferences={preferences}
+              trade={latestTrade}
+              lastSoundEvent={lastSoundEvent}
+              volume={volume}
+              onPreferencesChange={handlePreferencesChange}
+              onPlayCurrentTrade={handlePlayCurrentTrade}
+              onReplayLast={handleReplayLast}
+              onReplayRecent={handleReplayRecent}
+              onSoundEnabledChange={handleSoundEnabledChange}
+              onSymbolChange={handleSymbolChange}
+              onVolumeChange={setVolume}
+            />
           </div>
+
+          <footer className="app-footer">
+            <span>prototype for Bitamin summer project</span>
+            <span>AI는 주가 예측이 아니라 의도 이해와 접근성 제어에 사용됩니다.</span>
+          </footer>
         </div>
       </main>
     </>
   );
 };
-
