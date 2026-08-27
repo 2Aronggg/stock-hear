@@ -12,6 +12,9 @@ const starterStocks = [
   { symbol: "MOCK_SURGE", name: "급등주 (Mock)" },
 ];
 
+export const isSupportedSymbol = (symbol: string): boolean =>
+  starterStocks.some((stock) => stock.symbol === symbol);
+
 export const StockSelector = ({ symbol, onSymbolChange }: StockSelectorProps) => (
   <section className="panel" aria-labelledby="stock-selector-title">
     <h2 id="stock-selector-title">종목 선택</h2>
