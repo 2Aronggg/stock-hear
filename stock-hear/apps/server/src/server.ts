@@ -358,10 +358,10 @@ const startServer = async (): Promise<void> => {
       });
     });
   } catch (error) {
-    console.error(
-      "Failed to start stock-hear server because KIS connection failed.",
-      error
-    );
+  console.error(
+    "Failed to start stock-hear server because KIS connection failed.",
+    error
+  );
 
     process.exitCode = 1;
   }
