@@ -1,4 +1,8 @@
-import type { ClientSocketMessage, ConnectionStatus, ServerSocketMessage } from "../types";
+import type {
+  ClientSocketMessage,
+  ConnectionStatus,
+  ServerSocketMessage
+} from "../types";
 
 interface MarketSocketOptions {
   url: string;
@@ -11,19 +15,35 @@ export class MarketSocket {
   private socket: WebSocket | null = null;
   private reconnectTimer: number | null = null;
 
-  constructor(private readonly options: MarketSocketOptions) {}
+  // 현재 선택된 종목을 기억
+  private currentSymbol: string;
+
+  // 사용자가 의도적으로 연결을 종료했는지 여부
+  private manuallyDisconnected = false;
+
+  constructor(private readonly options: MarketSocketOptions) {
+    this.currentSymbol = options.symbol;
+  }
 
   connect(): void {
+    this.manuallyDisconnected = false;
     this.options.onStatusChange("connecting");
+
     this.socket = new WebSocket(this.options.url);
 
     this.socket.addEventListener("open", () => {
       this.options.onStatusChange("connected");
-      this.send({ type: "subscribe", symbol: this.options.symbol });
+
+      // 최초 연결 또는 재연결 시 현재 선택된 종목 구독
+      this.send({
+        type: "subscribe",
+        symbol: this.currentSymbol
+      });
     });
 
     this.socket.addEventListener("message", (event) => {
       const message = this.parseMessage(event.data);
+
       if (message) {
         this.options.onMessage(message);
       }
@@ -31,7 +51,10 @@ export class MarketSocket {
 
     this.socket.addEventListener("close", () => {
       this.options.onStatusChange("disconnected");
-      this.scheduleReconnect();
+
+      if (!this.manuallyDisconnected) {
+        this.scheduleReconnect();
+      }
     });
 
     this.socket.addEventListener("error", () => {
@@ -40,14 +63,24 @@ export class MarketSocket {
   }
 
   subscribe(symbol: string): void {
-    this.send({ type: "subscribe", symbol });
+    this.currentSymbol = symbol;
+
+    this.send({
+      type: "subscribe",
+      symbol
+    });
   }
 
   unsubscribe(symbol: string): void {
-    this.send({ type: "unsubscribe", symbol });
+    this.send({
+      type: "unsubscribe",
+      symbol
+    });
   }
 
   disconnect(): void {
+    this.manuallyDisconnected = true;
+
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
