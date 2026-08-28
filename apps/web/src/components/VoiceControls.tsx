@@ -365,18 +365,6 @@ export const VoiceControls = ({
       return;
     }
 
-    if (parsed.intent === "select-stock") {
-      if (!parsed.symbol) {
-        speakAndShow("종목을 말해 주세요.");
-        return;
-      }
-
-      onSymbolChange(parsed.symbol);
-      setPendingQuestion({ type: "mode", symbol: parsed.symbol, stockName: targetStockName });
-        speakAndShow(`${targetStockName}. 가격, 거래량, 큰 변화 중 선택.`);
-      return;
-    }
-
     speakAndShow("정확히 듣지 못했습니다. 다시 말씀해 주세요.");
   };
 

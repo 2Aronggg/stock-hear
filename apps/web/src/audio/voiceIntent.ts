@@ -262,18 +262,18 @@ export const buildSonificationPlan = (
   const symbol = parsed.symbol ?? context.currentSymbol;
   const stockName = parsed.stockName ?? context.currentStockName;
 
-  if (
-    (parsed.intent === "select-stock" && parsed.mode) ||
-    parsed.intent === "start-sonification"
-  ) {
+  if (parsed.intent === "select-stock" || parsed.intent === "start-sonification") {
+    // 모드를 말하지 않았다면 되묻지 않고 현재(또는 기본) 청취 모드로 바로 재생한다.
+    const mode = parsed.mode ?? context.currentPreferences.mode;
+
     return {
       action: "START_REALTIME",
       symbol,
       stockName,
-      metrics: metricsFor(parsed.mode, parsed.includeVolume, context.currentPreferences.includeVolume),
+      metrics: metricsFor(mode, parsed.includeVolume, context.currentPreferences.includeVolume),
       timeRange: "realtime",
-      mode: parsed.mode,
-      thresholdRate: parsed.mode === "alerts-only" ? (parsed.thresholdRate ?? 1) : null
+      mode,
+      thresholdRate: mode === "alerts-only" ? (parsed.thresholdRate ?? context.currentPreferences.thresholdRate ?? 1) : null
     };
   }
 
