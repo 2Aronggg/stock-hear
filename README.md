@@ -704,70 +704,10 @@ Frontend의 `VITE_` 환경변수에는 공개 가능한 Backend 주소만 저장
 
 ---
 
-## Team Roles
 
 ---
 
-### 김수민 — Backend / WebSocket
 
-한국투자증권 실시간 데이터를 안정적으로 수신하고 프론트엔드로 전달하는 WebSocket 구조를 담당했습니다.
-
-- Backend WebSocket 구현
-- KIS 실시간 데이터 연결
-- 종목 구독 / 구독 해제
-- 실시간 체결정보 수신
-- 연결 상태 관리
-- 중복 구독 관리
-- WebSocket 재연결 처리
-- Frontend 실시간 데이터 전달
-
----
-
-### 나웅주 — KIS API Integration
-
-한국투자증권 Open API 인증 및 외부 API 연동 구조를 담당했습니다.
-
-- 한국투자증권 Open API 연동
-- KIS Access Token 발급
-- Approval Key 발급
-- 인증정보 관리
-- 실시간 API 연결 구조 구성
-- 환경변수를 이용한 비밀정보 관리
-- KIS 인증정보의 Backend 전용 관리
-
----
-
-### 이아형 — Voice Interaction / AI Interface
-
-사용자가 자연스러운 음성으로 서비스를 이용할 수 있도록 음성 인터페이스와 AI Sonification Planner 연결을 담당했습니다.
-
-- Web Speech API 기반 음성 명령
-- 자연어 사용자 입력 처리
-- TTS 기반 시장정보 안내
-- AI Sonification Planner 연동
-- 사용자 의도 분류
-- Multi-turn Context 처리
-- 부족한 슬롯 추가 질문
-- 모호한 종목 및 명령 확인
-- 음성 오인식 대응
-- Sonification 요청 / TTS 요청 분기
-- Replay 명령 처리
-- 사용자 자유질의를 실행 가능한 `SonificationPlan`으로 변환
-
-  ### 오수아 — Sonification
-
-실시간 주식 데이터를 실제 청각정보로 변환하는 소리화 기능을 담당했습니다.
-
-- Web Audio API 기반 소리화 엔진 구현
-- 가격 변화 → 음높이 매핑
-- 거래량 → 음량 매핑
-- 체결빈도 → 리듬 매핑
-- 실시간 체결 데이터 기반 음향 처리
-- 소리 시작 / 중지 / 음소거
-- 볼륨 제어
-
-
----
 
 ## 역할별 시스템 연결
 
