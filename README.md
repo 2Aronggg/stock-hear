@@ -11,6 +11,10 @@ Stock-Hear는 기존의 시각 중심 주식정보 서비스를 보완하여, �
 
 ![Stock-Hear 서비스 미리보기](docs/images/02-core-concept.png)
 
+실제 서비스 화면:
+
+![Stock-Hear 실제 서비스 화면](docs/images2/10-service-preview.png)
+
 ---
 
 # 1. Project Overview
