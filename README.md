@@ -2,12 +2,14 @@
 
 시각장애인을 위한 **실시간 주식정보 음성·음향 변환 서비스**입니다.
 
-한국투자증권 Open API를 통해 국내주식 실시간 체결정보를 수신하고,  
+한국투자증권 Open API를 통해 국내주식 실시간 체결정보를 수신하고,
 현재가·등락률·거래량·체결 흐름을 **화면, 음성(TTS), 소리화(Sonification)** 방식으로 전달합니다.
 
 Stock-Hear는 기존의 시각 중심 주식정보 서비스를 보완하여, 시각장애인 사용자가 실시간 시장 변화를 청각적으로 인지할 수 있도록 설계되었습니다.
 
 또한 사용자가 정해진 명령어를 외우지 않고 자연스럽게 말할 수 있도록 **AI Sonification Planner**를 적용하여 자연어 입력을 실제 소리화 실행 조건으로 변환합니다.
+
+![Stock-Hear 서비스 미리보기](docs/images/02-core-concept.png)
 
 ---
 
@@ -18,6 +20,8 @@ Stock-Hear는 기존의 시각 중심 주식정보 서비스를 보완하여, �
 기존 주식 서비스는 차트, 색상, 숫자 등 시각정보에 크게 의존하기 때문에 시각장애인이 실시간 시장 변화를 직관적으로 파악하는 데 한계가 있습니다.
 
 Stock-Hear는 주식 데이터를 단순히 음성으로 읽어주는 것에서 더 나아가, 가격과 거래량, 체결 흐름 자체를 **청각적 패턴으로 변환**하여 전달합니다.
+
+![기존 서비스 대비 Stock-Hear 문제 정의](docs/images/01-problem-definition.png)
 
 ## 핵심 목표
 
@@ -65,25 +69,29 @@ AI 역시 투자 판단이나 시장 예측에는 사용하지 않습니다.
 - 체결 데이터를 내부 데이터 형식으로 정규화
 - 프론트엔드로 실시간 데이터 전달
 
+![중복 구독 방지·구독 통합 관리·연결 상태 관리](docs/images/06-realtime-stability.png)
+
 ### 데이터 흐름
 
 ```text
 사용자 종목 선택
-        ↓
+↓
 Frontend
-        ↓
+↓
 Backend 구독 요청
-        ↓
+↓
 KIS WebSocket
-        ↓
+↓
 실시간 체결 데이터
-        ↓
+↓
 Backend Parser
-        ↓
+↓
 RealtimeTrade
-        ↓
+↓
 Frontend WebSocket
 ```
+
+![실시간 데이터 수신 3단계: 종목 선택 → 구독 요청 → 실시간 수신](docs/images/05-realtime-data-flow.png)
 
 KIS 인증정보와 토큰은 모두 백엔드에서 관리하며 프론트엔드에는 노출하지 않습니다.
 
@@ -95,19 +103,21 @@ Web Audio API를 이용하여 실시간 체결정보를 소리로 변환합니�
 
 AI가 직접 새로운 소리를 생성하거나 소리화 규칙을 변경하는 것이 아니라, 사전에 정의한 **고정 소리화 엔진**을 통해 시장정보를 일관된 방식으로 전달합니다.
 
+![소리화 제어 UI - 음높이, 세기, 속도 설정](docs/images/08-sonification-ui.png)
+
 ### 기본 소리화 규칙
 
 ```text
 가격 변화
-    ↓
+↓
 음높이 변화
 
 거래량
-    ↓
+↓
 음량 변화
 
 체결빈도
-    ↓
+↓
 리듬 변화
 ```
 
@@ -121,6 +131,10 @@ AI가 직접 새로운 소리를 생성하거나 소리화 규칙을 변경하�
 - 음소거
 - 볼륨 조절
 - 실시간 이벤트 기반 음향 출력
+
+![실시간 음향 처리 및 이벤트 설계: 반복 제어(450ms Cooldown), 이벤트 감지(±5% Threshold), 실시간 음향 생성(Web Audio API)](docs/images/09-audio-event-design.png)
+
+> 소리화 데모 영상: https://youtu.be/BrqKv_tZWSg
 
 ---
 
@@ -303,33 +317,35 @@ User
 
 사용자의 자유질의는 먼저 AI Sonification Planner를 거칩니다.
 
+![자연어 기반 청취 조건 설정: 의도 분석 및 계획 → 데이터 처리 → 소리화 및 후처리](docs/images/07-ai-listening-condition.png)
+
 ```text
 사용자 자유질의
-        ↓
+↓
 AI Sonification Planner
-        ↓
+↓
 사용자 의도 분석
-        ↓
+↓
 SonificationPlan 생성
-        ↓
+↓
 필수 슬롯 검사
-   ├─ 부족
-   │    ↓
-   │  Multi-turn 질문
-   │
-   └─ 충족
-        ↓
+├─ 부족
+│ ↓
+│ Multi-turn 질문
+│
+└─ 충족
+↓
 데이터 소스 선택
-   ├─ 실시간 WebSocket
-   ├─ Replay Buffer
-   └─ SoundEventLog
-        ↓
+├─ 실시간 WebSocket
+├─ Replay Buffer
+└─ SoundEventLog
+↓
 종목 · 기간 · 필터 · 재생 순서 적용
-        ↓
+↓
 기존 고정 소리화 엔진
-        ↓
+↓
 소리 출력
-        ↓
+↓
 MarketEvent + SoundEventLog
 ```
 
@@ -395,51 +411,54 @@ AI Sonification Planner가 자연어 요청을 구조화한 뒤에는 기존 시
 
 ## 전체 구조
 
+![전체 시스템 구조: React Frontend / Node.js Server / KIS Open API](docs/images/03-system-overview.png)
+
 ```text
-                    User
-                     │
-                     │ 자연어 / 버튼 입력
-                     ▼
-              React / Vite
-                Frontend
-                     │
-         REST / WebSocket
-                     │
-                     ▼
-          Express Backend Server
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-          ▼                     ▼
-   KIS Data Pipeline    AI Sonification Planner
-          │                     │
-          │              SonificationPlan
-          │                     │
-          └──────────┬──────────┘
-                     │
-                     ▼
-        Data Source / Event Data
-                     │
-          ┌──────────┼──────────┐
-          │          │          │
-          ▼          ▼          ▼
-     WebSocket    Replay     SoundEventLog
-          │
-          ▼
-      기존 고정
-   Sonification Engine
-          │
-          ▼
-       Sound Output
+User
+│
+│ 자연어 / 버튼 입력
+▼
+React / Vite
+Frontend
+│
+REST / WebSocket
+│
+▼
+Express Backend Server
+│
+┌──────────┴──────────┐
+│ │
+▼ ▼
+KIS Data Pipeline AI Sonification Planner
+│ │
+│ SonificationPlan
+│ │
+└──────────┬──────────┘
+│
+▼
+Data Source / Event Data
+│
+┌──────────┼──────────┐
+│ │ │
+▼ ▼ ▼
+WebSocket Replay SoundEventLog
+│
+▼
+기존 고정
+Sonification Engine
+│
+▼
+Sound Output
 
-
-          ▲
-          │
-   REST / WebSocket
-          │
-  한국투자증권 KIS
-      Open API
+▲
+│
+REST / WebSocket
+│
+한국투자증권 KIS
+Open API
 ```
+
+![상세 아키텍처 다이어그램: Frontend, Backend(Express + WebSocket), AI Sonification Planner, KIS Open API 데이터 흐름](docs/images/image.png)
 
 ---
 
@@ -501,9 +520,9 @@ WebSocket
 
 ```text
 Frontend
-    ↓
+↓
 Backend
-    ↓
+↓
 KIS Open API
 ```
 
@@ -586,25 +605,25 @@ KIS Open API
 
 ```text
 stock-hear/
-  apps/
-    web/
-      src/
-        components/
-        audio/
-        api/
-        types.ts
-        App.tsx
-        main.tsx
-        styles.css
+apps/
+web/
+src/
+components/
+audio/
+api/
+types.ts
+App.tsx
+main.tsx
+styles.css
 
-    server/
-      src/
-        kis/
-        config.ts
-        server.ts
+server/
+src/
+kis/
+config.ts
+server.ts
 
-  docs/
-  package.json
+docs/
+package.json
 ```
 
 ### `apps/web`
@@ -704,26 +723,23 @@ Frontend의 `VITE_` 환경변수에는 공개 가능한 Backend 주소만 저장
 
 ---
 
-
 ---
-
-
 
 ## 역할별 시스템 연결
 
 ```text
 KIS API Integration
-        ↓
+↓
 실시간 데이터 수신
-        ↓
+↓
 Backend / WebSocket
-        ↓
+↓
 AI / Voice Interface
-        ↓
+↓
 Sonification Planner
-        ↓
+↓
 Sonification Engine
-        ↓
+↓
 사용자 음성·음향 출력
 ```
 
@@ -731,6 +747,14 @@ Sonification Engine
 
 ---
 
+## 프로젝트 문서
+
+- [파일 및 폴더 역할](docs/FILE_STRUCTURE.md)
+- [개발 규칙](docs/DEVELOPMENT_RULES.md)
+- [전체 체크리스트](docs/TEAM_CHECKLIST.md)
+- [보안 규칙](docs/SECURITY_RULES.md)
+- [한국투자증권 API 연동 기록](docs/API_INTEGRATION.md)
+- [작업 배정표](docs/TASKS.md)
 
 ---
 
@@ -740,18 +764,18 @@ Stock-Hear는 단순히 주식 숫자를 음성으로 읽어주는 서비스를 
 
 ```text
 한국투자증권 실시간 데이터
-            ↓
-        Backend
-            ↓
-   AI Sonification Planner
-            ↓
-     실행 조건 구조화
-            ↓
-  기존 Sonification Engine
-            ↓
-       소리 / 음성
-            ↓
-          User
+↓
+Backend
+↓
+AI Sonification Planner
+↓
+실행 조건 구조화
+↓
+기존 Sonification Engine
+↓
+소리 / 음성
+↓
+User
 ```
 
 AI는 사용자의 자연스러운 요청을 이해하고 기존 시스템이 실행 가능한 형태로 변환하며, 실제 소리 생성은 고정된 Sonification Engine이 담당합니다.
