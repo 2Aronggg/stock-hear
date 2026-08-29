@@ -747,15 +747,6 @@ Sonification Engine
 
 ---
 
-## 프로젝트 문서
-
-- [파일 및 폴더 역할](docs/FILE_STRUCTURE.md)
-- [개발 규칙](docs/DEVELOPMENT_RULES.md)
-- [전체 체크리스트](docs/TEAM_CHECKLIST.md)
-- [보안 규칙](docs/SECURITY_RULES.md)
-- [한국투자증권 API 연동 기록](docs/API_INTEGRATION.md)
-- [작업 배정표](docs/TASKS.md)
-
 ---
 
 ## Summary
