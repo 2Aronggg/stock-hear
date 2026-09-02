@@ -37,18 +37,21 @@ apps/server/.env에 인증정보 저장
 서버에서 한국투자증권 실시간 WebSocket 연결
 서버에서 종목 구독 요청
 체결정보 수신
-RealtimeTrade로 변환
+MarketTrade로 변환
 프론트엔드 /ws로 전달
 ```
 
-## RealtimeTrade 구조
+## MarketTrade 구조
 
 프론트엔드와 서버는 같은 필드 구조를 유지한다.
 
 | 필드 | 설명 |
 |---|---|
+| `market` | 시장 구분 (`KR` 또는 `US`) |
+| `exchange` | 거래소 코드 |
 | `symbol` | 종목코드 |
 | `stockName` | 종목명 |
+| `currency` | 통화 (`KRW` 또는 `USD`) |
 | `tradeTime` | 체결시각 |
 | `currentPrice` | 현재가 |
 | `changePrice` | 전일 대비 가격 |
@@ -63,14 +66,30 @@ RealtimeTrade로 변환
 
 | 우리 필드 | 한국투자증권 원본 필드 | 확인 여부 |
 |---|---|---|
-| `symbol` | 미확인 | [ ] |
-| `stockName` | 미확인 | [ ] |
-| `tradeTime` | 미확인 | [ ] |
-| `currentPrice` | 미확인 | [ ] |
-| `changePrice` | 미확인 | [ ] |
-| `changeRate` | 미확인 | [ ] |
-| `tradeVolume` | 미확인 | [ ] |
-| `accumulatedVolume` | 미확인 | [ ] |
+| `symbol` | `MKSC_SHRN_ISCD` | [x] |
+| `stockName` | 서버 지원 종목 매핑 | [x] |
+| `tradeTime` | `STCK_CNTG_HOUR` | [x] |
+| `currentPrice` | `STCK_PRPR` | [x] |
+| `changePrice` | `PRDY_VRSS` | [x] |
+| `changeRate` | `PRDY_CTRT` | [x] |
+| `tradeVolume` | `CNTG_VOL` | [x] |
+| `accumulatedVolume` | `ACML_VOL` | [x] |
+
+## 미국주식 실시간 체결 매핑
+
+- TR ID: `HDFSCNT0`
+- 구독 키 예시: 나스닥 Apple `DNASAAPL`
+- 미국 무료 시세는 KIS 안내상 0분 지연 체결가로 제공된다.
+
+| 우리 필드 | 한국투자증권 원본 필드 |
+|---|---|
+| `symbol` | `SYMB` |
+| `tradeTime` | `KHMS` (없으면 `XHMS`) |
+| `currentPrice` | `LAST` |
+| `changePrice` | `DIFF` |
+| `changeRate` | `RATE` |
+| `tradeVolume` | `EVOL` |
+| `accumulatedVolume` | `TVOL` |
 
 ## 테스트 기록
 

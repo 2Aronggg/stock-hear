@@ -22,8 +22,17 @@ const statusDescription: Record<ConnectionStatus, string> = {
 const formatSignedRate = (rate: number): string =>
   `${rate > 0 ? "+" : ""}${rate.toFixed(2)}%`;
 
-const formatSignedPrice = (price: number): string =>
-  `${price > 0 ? "+" : ""}${price.toLocaleString("ko-KR")}원`;
+const formatPrice = (price: number, currency: "KRW" | "USD"): string =>
+  new Intl.NumberFormat(currency === "KRW" ? "ko-KR" : "en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: currency === "KRW" ? 0 : 2
+  }).format(price);
+
+const formatSignedPrice = (
+  price: number,
+  currency: "KRW" | "USD"
+): string => `${price > 0 ? "+" : ""}${formatPrice(price, currency)}`;
 
 export const MarketDisplay = ({ status, trade }: MarketDisplayProps) => {
   const trendClass = trade
@@ -52,9 +61,9 @@ export const MarketDisplay = ({ status, trade }: MarketDisplayProps) => {
         <div className="market-feature-data">
           <div className={`price-card ${trendClass}`} key={`${trade.symbol}-${trade.currentPrice}-${trade.tradeTime}`}>
             <span className="price-label">현재가</span>
-            <strong>{trade.currentPrice.toLocaleString("ko-KR")}원</strong>
+            <strong>{formatPrice(trade.currentPrice, trade.currency)}</strong>
             <span>
-              {formatSignedRate(trade.changeRate)} · {formatSignedPrice(trade.changePrice)}
+              {formatSignedRate(trade.changeRate)} · {formatSignedPrice(trade.changePrice, trade.currency)}
             </span>
           </div>
           <dl className="market-values">

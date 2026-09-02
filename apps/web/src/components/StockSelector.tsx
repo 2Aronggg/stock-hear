@@ -9,6 +9,10 @@ export const starterStocks = [
   { symbol: "035420", name: "NAVER", aliases: ["naver", "네이버"] },
   { symbol: "122630", name: "KODEX 레버리지", aliases: ["kodex레버리지", "코덱스레버리지", "코덱스"] },
   { symbol: "041190", name: "우리기술투자", aliases: ["우리기술투자", "우리기술", "우기투"] },
+  { symbol: "AAPL", name: "Apple", aliases: ["apple", "애플"] },
+  { symbol: "MSFT", name: "Microsoft", aliases: ["microsoft", "마이크로소프트"] },
+  { symbol: "NVDA", name: "NVIDIA", aliases: ["nvidia", "엔비디아"] },
+  { symbol: "TSLA", name: "Tesla", aliases: ["tesla", "테슬라"] },
   { symbol: "MOCK_SURGE", name: "급등주 Mock", aliases: ["급등주", "mock", "목업", "모의급등주"] }
 ];
 

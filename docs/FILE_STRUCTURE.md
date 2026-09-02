@@ -83,8 +83,21 @@ MVP에서 팀원이 빠르게 이해하고 수정할 수 있도록 파일 수를
   - 한국투자증권 실시간 WebSocket 연결, 종목 구독, 구독 해제, 재연결을 구현할 위치다.
 
 - `parser.ts`
-  - 한국투자증권 원본 체결 메시지를 `RealtimeTrade`로 변환한다.
-  - 공식 필드명을 확인하기 전에는 임의로 필드 매핑을 확정하지 않는다.
+  - TR ID에 따라 국내·미국 파서를 선택하고 `MarketTrade`를 반환한다.
+
+- `domestic/parser.ts`
+  - 국내주식 `H0STCNT0` 원본 체결 메시지를 `MarketTrade`로 변환한다.
+
+- `overseas/parser.ts`
+  - 미국주식 `HDFSCNT0` 원본 체결 메시지를 `MarketTrade`로 변환한다.
+
+### `apps/server/src/market`
+
+- `types.ts`
+  - 국내·미국 체결 데이터가 함께 사용하는 `MarketTrade` 타입을 정의한다.
+
+- `instruments.ts`
+  - 지원 종목의 시장, 거래소, 통화, KIS TR ID와 구독 키를 관리한다.
 
 ## `docs`
 

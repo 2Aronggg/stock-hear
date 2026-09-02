@@ -4,8 +4,11 @@ import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 
 import { config } from "./config.js";
-import { KisRealtimeSocket } from "./kis/websocket.js";
-import type { RealtimeTrade } from "./kis/parser.js";
+import {
+  KisRealtimeSocket,
+  type KisConnectionSnapshot
+} from "./kis/websocket.js";
+import type { MarketTrade } from "./market/types.js";
 
 type ClientMessage =
   | { type: "subscribe"; symbol: string }
@@ -15,7 +18,7 @@ type ServerMessage =
   | { type: "connected"; receivedAt: string }
   | { type: "subscribed"; symbol: string; receivedAt: string }
   | { type: "unsubscribed"; symbol: string; receivedAt: string }
-  | { type: "trade"; trade: RealtimeTrade }
+  | { type: "trade"; trade: MarketTrade }
   | { type: "error"; message: string; receivedAt: string };
 
 const MOCK_SURGE_SYMBOL = "MOCK_SURGE";
@@ -29,6 +32,14 @@ const socketServer = new WebSocketServer({
 });
 
 const kisSocket = new KisRealtimeSocket();
+const serverStartedAt = Date.now();
+
+let kisConnection = kisSocket.getConnectionSnapshot();
+let lastTradeAt: string | null = null;
+
+kisSocket.onConnectionStatusChange((snapshot) => {
+  kisConnection = snapshot;
+});
 
 /*
  * 각 프론트가 현재 어떤 종목을 선택했는지 저장
@@ -59,13 +70,43 @@ app.use(cors({ origin: config.CLIENT_ORIGIN }));
 app.use(express.json());
 
 app.get("/api/health", (_request, response) => {
+  const status = getServiceStatus(kisConnection);
+
   response.json({
-    status: "ok",
+    status,
     service: "stock-hear-server",
-    kisEnvironment: config.KIS_ENVIRONMENT,
+    server: "ok",
+    kis: {
+      status: kisConnection.status,
+      environment: config.KIS_ENVIRONMENT,
+      lastConnectedAt: kisConnection.lastConnectedAt,
+      lastDisconnectedAt: kisConnection.lastDisconnectedAt,
+      lastErrorAt: kisConnection.lastErrorAt,
+      lastTradeAt
+    },
+    uptimeSeconds: Math.floor(
+      (Date.now() - serverStartedAt) / 1000
+    ),
     receivedAt: new Date().toISOString()
   });
 });
+
+const getServiceStatus = (
+  connection: KisConnectionSnapshot
+): "ok" | "starting" | "degraded" => {
+  if (connection.status === "connected") {
+    return "ok";
+  }
+
+  if (
+    connection.status === "connecting" &&
+    connection.lastConnectedAt === null
+  ) {
+    return "starting";
+  }
+
+  return "degraded";
+};
 
 const sendJson = (
   socket: WebSocket,
@@ -109,7 +150,7 @@ const stopMock = (socket: WebSocket): void => {
   }
 };
 
-const createMockTrade = (tick: number): RealtimeTrade => {
+const createMockTrade = (tick: number): MarketTrade => {
   const now = new Date();
 
   const tradeTime = [
@@ -124,7 +165,11 @@ const createMockTrade = (tick: number): RealtimeTrade => {
   const changePrice = currentPrice - 12000;
 
   return {
+    market: "KR",
+    exchange: "DEMO",
     symbol: MOCK_SURGE_SYMBOL,
+    stockName: "급등주 Mock",
+    currency: "KRW",
     tradeTime,
     currentPrice,
     changePrice,
@@ -135,7 +180,8 @@ const createMockTrade = (tick: number): RealtimeTrade => {
         : tick % 2 === 0
           ? 50000
           : 5000,
-    accumulatedVolume: 10000000 + tick * 500000
+    accumulatedVolume: 10000000 + tick * 500000,
+    receivedAt: now.toISOString()
   };
 };
 
@@ -263,7 +309,7 @@ const parseClientMessage = (
         record.type === "unsubscribe") &&
       typeof record.symbol === "string"
     ) {
-      const symbol = record.symbol.trim();
+      const symbol = record.symbol.trim().toUpperCase();
 
       if (!symbol) {
         return null;
@@ -335,6 +381,8 @@ socketServer.on("connection", (socket) => {
  * 더 이상 전체 broadcast하지 않음.
  */
 kisSocket.onTrade((trade) => {
+  lastTradeAt = new Date().toISOString();
+
   for (const [client, symbol] of clientSymbols) {
     if (symbol !== trade.symbol) {
       continue;
@@ -347,25 +395,21 @@ kisSocket.onTrade((trade) => {
   }
 });
 
-const startServer = async (): Promise<void> => {
-  try {
-    await kisSocket.connect();
-
-    httpServer.listen(config.PORT, () => {
-      console.info("stock-hear server started", {
-        port: config.PORT,
-        clientOrigin: config.CLIENT_ORIGIN
-      });
+const startServer = (): void => {
+  httpServer.listen(config.PORT, () => {
+    console.info("stock-hear server started", {
+      port: config.PORT,
+      clientOrigin: config.CLIENT_ORIGIN
     });
-  } catch (error) {
-    console.error(
-      "Failed to start stock-hear server because KIS connection failed.",
-      error
-    );
 
-    process.exitCode = 1;
-  }
+    void kisSocket.connect().catch((error: unknown) => {
+      console.error(
+        "Initial KIS connection failed; server remains available.",
+        error
+      );
+    });
+  });
 };
 
-void startServer();
+startServer();
 
