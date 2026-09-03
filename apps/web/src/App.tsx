@@ -169,14 +169,18 @@ export const App = () => {
     }
 
     const syntheticTrade: RealtimeTrade = {
+      market: latestTrade?.market ?? "KR",
+      exchange: latestTrade?.exchange ?? "DEMO",
       symbol: lastSoundEvent.symbol,
       stockName: lastSoundEvent.stockName,
+      currency: latestTrade?.currency ?? "KRW",
       tradeTime: latestTrade?.tradeTime ?? "",
       currentPrice: lastSoundEvent.sourceData.currentPrice,
       changePrice: lastSoundEvent.sourceData.changePrice,
       changeRate: lastSoundEvent.sourceData.changeRate,
       tradeVolume: lastSoundEvent.sourceData.tradeVolume,
-      accumulatedVolume: latestTrade?.accumulatedVolume ?? 0
+      accumulatedVolume: latestTrade?.accumulatedVolume ?? 0,
+      receivedAt: new Date().toISOString()
     };
 
     const soundEvent = sonification.playTrade(syntheticTrade, lastSoundEvent.stockName);

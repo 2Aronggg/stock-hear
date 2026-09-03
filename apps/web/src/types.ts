@@ -1,5 +1,9 @@
-export interface RealtimeTrade {
+export interface MarketTrade {
+  market: "KR" | "US";
+  exchange: string;
   symbol: string;
+  stockName: string;
+  currency: "KRW" | "USD";
   tradeTime: string;
   currentPrice: number;
   changePrice: number;
@@ -7,10 +11,10 @@ export interface RealtimeTrade {
   tradeVolume: number;
   accumulatedVolume: number;
 
-  // 프론트 샘플/추후 UI 확장용
-  stockName?: string;
-  receivedAt?: string;
+  receivedAt: string;
 }
+
+export type RealtimeTrade = MarketTrade;
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 

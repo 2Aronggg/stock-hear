@@ -100,8 +100,11 @@ export class Sonification {
     volume: "low" | "high" = "low"
   ): void {
     const sampleTrade: RealtimeTrade = {
+      market: "KR",
+      exchange: "DEMO",
       symbol: "SAMPLE",
       stockName: "샘플",
+      currency: "KRW",
       tradeTime: "000000",
       currentPrice: 10000,
 

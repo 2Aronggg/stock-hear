@@ -1,15 +1,30 @@
 import WebSocket from "ws";
 
 import { config } from "../config.js";
+import { getMarketInstrument } from "../market/instruments.js";
+import type { MarketTrade } from "../market/types.js";
 import { requestKisApprovalKey } from "./auth.js";
-import {
-  parseKisTradeMessage,
-  type RealtimeTrade
-} from "./parser.js";
+import { parseMarketTradeMessage } from "./parser.js";
 
-export type TradeHandler = (trade: RealtimeTrade) => void;
+export type TradeHandler = (trade: MarketTrade) => void;
+export type KisConnectionStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "error";
 
-const KIS_REALTIME_TRADE_TR_ID = "H0STCNT0";
+export interface KisConnectionSnapshot {
+  status: KisConnectionStatus;
+  lastConnectedAt: string | null;
+  lastDisconnectedAt: string | null;
+  lastErrorAt: string | null;
+}
+
+export type ConnectionStatusHandler = (
+  snapshot: KisConnectionSnapshot
+) => void;
+
 const RECONNECT_DELAY_MS = 3000;
 
 export class KisRealtimeSocket {
@@ -22,6 +37,15 @@ export class KisRealtimeSocket {
 
   // 체결 데이터 수신 시 실행할 콜백
   private tradeHandler: TradeHandler | null = null;
+
+  private connectionStatusHandler: ConnectionStatusHandler | null = null;
+
+  private connectionSnapshot: KisConnectionSnapshot = {
+    status: "disconnected",
+    lastConnectedAt: null,
+    lastDisconnectedAt: null,
+    lastErrorAt: null
+  };
 
   // 실제 KIS WebSocket
   private socket: WebSocket | null = null;
@@ -42,18 +66,21 @@ export class KisRealtimeSocket {
     this.tradeHandler = handler;
   }
 
+  onConnectionStatusChange(handler: ConnectionStatusHandler): void {
+    this.connectionStatusHandler = handler;
+    handler(this.getConnectionSnapshot());
+  }
+
+  getConnectionSnapshot(): KisConnectionSnapshot {
+    return { ...this.connectionSnapshot };
+  }
+
   /*
    * 최초 KIS 연결
    * approval key를 발급받고 KIS WebSocket을 연결
    * 이후 연결이 끊기면 scheduleReconnect()에서 자동 복구
    */
   async connect(): Promise<void> {
-    const websocketUrl = config.KIS_WEBSOCKET_URL;
-
-    if (!websocketUrl) {
-      throw new Error("KIS WebSocket URL is not configured.");
-    }
-
     // 이미 연결되어 있거나 연결 중이면 중복 연결 방지
     if (
       this.socket?.readyState === WebSocket.OPEN ||
@@ -62,12 +89,30 @@ export class KisRealtimeSocket {
       return;
     }
 
-    // 최초 연결 시 approval key 발급
-    if (!this.approvalKey) {
-      this.approvalKey = await requestKisApprovalKey();
-    }
+    this.updateConnectionStatus(
+      this.hasConnectedOnce ? "reconnecting" : "connecting"
+    );
 
-    await this.openSocket(websocketUrl, false);
+    try {
+      const websocketUrl = config.KIS_WEBSOCKET_URL;
+
+      if (!websocketUrl) {
+        throw new Error("KIS WebSocket URL is not configured.");
+      }
+
+      // 최초 연결 시 approval key 발급
+      if (!this.approvalKey) {
+        this.approvalKey = await requestKisApprovalKey();
+      }
+
+      await this.openSocket(websocketUrl, this.hasConnectedOnce);
+    } catch (error) {
+      this.updateConnectionStatus("error", {
+        lastErrorAt: new Date().toISOString()
+      });
+      this.scheduleReconnect();
+      throw error;
+    }
   }
 
   /*
@@ -93,6 +138,9 @@ export class KisRealtimeSocket {
       socket.on("open", () => {
         this.isConnecting = false;
         this.hasConnectedOnce = true;
+        this.updateConnectionStatus("connected", {
+          lastConnectedAt: new Date().toISOString()
+        });
 
         if (isReconnect) {
           console.info("[KIS WS] reconnected");
@@ -116,6 +164,10 @@ export class KisRealtimeSocket {
       socket.on("error", () => {
         console.error("[KIS WS] connection error");
 
+        this.updateConnectionStatus("error", {
+          lastErrorAt: new Date().toISOString()
+        });
+
         // 최초 연결 과정에서 실패한 경우
         if (
           socket.readyState !== WebSocket.OPEN &&
@@ -133,6 +185,10 @@ export class KisRealtimeSocket {
       socket.on("close", () => {
         console.info("[KIS WS] disconnected");
 
+        this.updateConnectionStatus("disconnected", {
+          lastDisconnectedAt: new Date().toISOString()
+        });
+
         // 이전 socket의 close 이벤트가
         // 새 socket을 null로 만들어버리는 것 방지
         if (this.socket === socket) {
@@ -148,10 +204,7 @@ export class KisRealtimeSocket {
          * 프론트가 여전히 보고 있는 종목 목록은 유지
          */
 
-        // 최초 연결 이후 끊긴 경우 자동 재연결
-        if (this.hasConnectedOnce) {
-          this.scheduleReconnect();
-        }
+        this.scheduleReconnect();
       });
     });
   }
@@ -176,6 +229,8 @@ export class KisRealtimeSocket {
       delayMs: RECONNECT_DELAY_MS
     });
 
+    this.updateConnectionStatus("reconnecting");
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
 
@@ -188,15 +243,12 @@ export class KisRealtimeSocket {
         return;
       }
 
-      void this.openSocket(websocketUrl, true).catch(
+      void this.connect().catch(
         (error: unknown) => {
           console.error(
             "[KIS WS] reconnect failed",
             error
           );
-
-          // 실패하면 다시 3초 뒤 시도
-          this.scheduleReconnect();
         }
       );
     }, RECONNECT_DELAY_MS);
@@ -223,8 +275,10 @@ export class KisRealtimeSocket {
     for (const symbol of this.subscriptions) {
       this.sendSubscriptionMessage(symbol, "1");
 
+      const instrument = getMarketInstrument(symbol);
+
       console.info("[KIS WS] resubscription requested", {
-        trId: KIS_REALTIME_TRADE_TR_ID,
+        trId: instrument?.kisTrId,
         symbol
       });
     }
@@ -235,8 +289,9 @@ export class KisRealtimeSocket {
    */
   subscribe(symbol: string): void {
     const normalizedSymbol = symbol.trim();
+    const instrument = getMarketInstrument(normalizedSymbol);
 
-    if (!normalizedSymbol) {
+    if (!normalizedSymbol || !instrument) {
       console.error("[KIS WS] invalid stock symbol");
       return;
     }
@@ -279,7 +334,7 @@ export class KisRealtimeSocket {
     );
 
     console.info("[KIS WS] subscription requested", {
-      trId: KIS_REALTIME_TRADE_TR_ID,
+      trId: instrument.kisTrId,
       symbol: normalizedSymbol
     });
   }
@@ -289,8 +344,9 @@ export class KisRealtimeSocket {
    */
   unsubscribe(symbol: string): void {
     const normalizedSymbol = symbol.trim();
+    const instrument = getMarketInstrument(normalizedSymbol);
 
-    if (!normalizedSymbol) {
+    if (!normalizedSymbol || !instrument) {
       console.error("[KIS WS] invalid stock symbol");
       return;
     }
@@ -340,7 +396,7 @@ export class KisRealtimeSocket {
     );
 
     console.info("[KIS WS] unsubscription requested", {
-      trId: KIS_REALTIME_TRADE_TR_ID,
+      trId: instrument.kisTrId,
       symbol: normalizedSymbol
     });
   }
@@ -360,6 +416,12 @@ export class KisRealtimeSocket {
       return;
     }
 
+    const instrument = getMarketInstrument(symbol);
+
+    if (!instrument) {
+      return;
+    }
+
     const message = {
       header: {
         approval_key: this.approvalKey,
@@ -369,8 +431,8 @@ export class KisRealtimeSocket {
       },
       body: {
         input: {
-          tr_id: KIS_REALTIME_TRADE_TR_ID,
-          tr_key: symbol
+          tr_id: instrument.kisTrId,
+          tr_key: instrument.kisTrKey
         }
       }
     };
@@ -397,7 +459,7 @@ export class KisRealtimeSocket {
         rawMessage.startsWith("0|") ||
         rawMessage.startsWith("1|")
       ) {
-        const trade = parseKisTradeMessage(rawMessage);
+        const trade = parseMarketTradeMessage(rawMessage);
 
         if (!trade) {
           console.error(
@@ -478,7 +540,20 @@ export class KisRealtimeSocket {
     return typeof value === "object" && value !== null;
   }
 
-  protected emitTrade(trade: RealtimeTrade): void {
+  protected emitTrade(trade: MarketTrade): void {
     this.tradeHandler?.(trade);
+  }
+
+  private updateConnectionStatus(
+    status: KisConnectionStatus,
+    timestamps: Partial<Omit<KisConnectionSnapshot, "status">> = {}
+  ): void {
+    this.connectionSnapshot = {
+      ...this.connectionSnapshot,
+      ...timestamps,
+      status
+    };
+
+    this.connectionStatusHandler?.(this.getConnectionSnapshot());
   }
 }
