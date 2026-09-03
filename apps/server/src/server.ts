@@ -9,6 +9,12 @@ import {
   type KisConnectionSnapshot
 } from "./kis/websocket.js";
 import type { MarketTrade } from "./market/types.js";
+import {
+  ReplaySampleExistsError,
+  ReplaySampleStore,
+  type ReplaySample
+} from "./replay/sampleStore.js";
+import { TradeBuffer } from "./replay/tradeBuffer.js";
 
 type ClientMessage =
   | { type: "subscribe"; symbol: string }
@@ -32,10 +38,15 @@ const socketServer = new WebSocketServer({
 });
 
 const kisSocket = new KisRealtimeSocket();
+const tradeBuffer = new TradeBuffer();
+const replaySampleStore = new ReplaySampleStore();
 const serverStartedAt = Date.now();
+const replaySampleWindowMs = 5 * 60 * 1000;
 
 let kisConnection = kisSocket.getConnectionSnapshot();
 let lastTradeAt: string | null = null;
+let replaySampleStatus: "loading" | "ready" | "error" = "loading";
+let replaySamples = new Map<string, ReplaySample>();
 
 kisSocket.onConnectionStatusChange((snapshot) => {
   kisConnection = snapshot;
@@ -84,11 +95,73 @@ app.get("/api/health", (_request, response) => {
       lastErrorAt: kisConnection.lastErrorAt,
       lastTradeAt
     },
+    replay: {
+      status: replaySampleStatus,
+      sampleCount: replaySamples.size,
+      symbols: [...replaySamples.keys()]
+    },
     uptimeSeconds: Math.floor(
       (Date.now() - serverStartedAt) / 1000
     ),
     receivedAt: new Date().toISOString()
   });
+});
+
+app.post("/api/replay/samples/:symbol", async (request, response) => {
+  if (!config.REPLAY_SAMPLE_WRITE_ENABLED) {
+    response.status(403).json({
+      error: "Replay sample capture is disabled."
+    });
+    return;
+  }
+
+  const symbol = request.params.symbol?.trim().toUpperCase();
+
+  if (!symbol) {
+    response.status(400).json({
+      error: "A stock symbol is required."
+    });
+    return;
+  }
+
+  const trades = tradeBuffer.getRecent(
+    symbol,
+    replaySampleWindowMs
+  );
+
+  if (trades.length === 0) {
+    response.status(409).json({
+      error: `No buffered trades are available for ${symbol}.`
+    });
+    return;
+  }
+
+  try {
+    const savedSample = await replaySampleStore.save(symbol, trades);
+    const loadedSample = await replaySampleStore.load(symbol);
+
+    if (loadedSample) {
+      replaySamples.set(symbol, loadedSample);
+      replaySampleStatus = "ready";
+    }
+
+    response.status(201).json({
+      status: "created",
+      sample: savedSample
+    });
+  } catch (error) {
+    if (error instanceof ReplaySampleExistsError) {
+      response.status(409).json({
+        error: error.message
+      });
+      return;
+    }
+
+    console.error("Failed to save replay sample", error);
+    response.status(500).json({
+      error: "Failed to save replay sample."
+    });
+  }
 });
 
 const getServiceStatus = (
@@ -382,6 +455,7 @@ socketServer.on("connection", (socket) => {
  */
 kisSocket.onTrade((trade) => {
   lastTradeAt = new Date().toISOString();
+  tradeBuffer.add(trade);
 
   for (const [client, symbol] of clientSymbols) {
     if (symbol !== trade.symbol) {
@@ -401,6 +475,22 @@ const startServer = (): void => {
       port: config.PORT,
       clientOrigin: config.CLIENT_ORIGIN
     });
+
+    void replaySampleStore
+      .loadAll()
+      .then((samples) => {
+        replaySamples = samples;
+        replaySampleStatus = "ready";
+
+        console.info("Replay samples loaded", {
+          count: samples.size,
+          symbols: [...samples.keys()]
+        });
+      })
+      .catch((error: unknown) => {
+        replaySampleStatus = "error";
+        console.error("Failed to load replay samples", error);
+      });
 
     void kisSocket.connect().catch((error: unknown) => {
       console.error(
