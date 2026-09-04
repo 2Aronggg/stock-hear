@@ -97,3 +97,30 @@ MarketTrade로 변환
 |---|---|---|---|---|---|---|
 | 미정 | 미정 | 미정 | 미정 | [ ] | [ ] | 미정 |
 
+## Replay 샘플 채집
+
+Replay 샘플 저장 API는 기본적으로 비활성화한다. 로컬에서 샘플을
+채집할 때만 `apps/server/.env`에 다음 값을 설정하고 서버를 재시작한다.
+
+```env
+REPLAY_SAMPLE_WRITE_ENABLED=true
+```
+
+원하는 종목을 프론트엔드에서 선택하고 충분한 체결을 수신한 다음,
+별도 PowerShell 창에서 저장 API를 한 번 호출한다.
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://localhost:4000/api/replay/samples/005930
+```
+
+샘플은 `apps/server/data/replay/<종목코드>.json`에 저장된다. 기존
+파일은 자동으로 덮어쓰지 않으며 같은 종목을 다시 저장하면 HTTP
+`409`를 반환한다. 국내장과 미국장 샘플을 각각 확정한 뒤에는 환경변수를
+다시 `false`로 변경한다.
+
+서버는 시작할 때 이 디렉터리의 모든 JSON 샘플을 읽고 형식을 검증한다.
+샘플이 없으면 빈 목록으로 정상 시작하며, 잘못된 JSON이나 필드가 있으면
+서버 로그와 `/api/health`의 `replay.status`에서 오류를 확인할 수 있다.
+
