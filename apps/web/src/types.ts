@@ -18,6 +18,10 @@ export type RealtimeTrade = MarketTrade;
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 
+export type DataMode = "live" | "replay" | "demo";
+
+export type ReplayStatus = "idle" | "playing" | "completed" | "error";
+
 export type ListeningMode = "price-only" | "price-volume" | "alerts-only";
 
 export type ListeningSpeed = "slow" | "normal" | "fast";
@@ -70,13 +74,29 @@ export interface SoundEventLog {
 export type ClientSocketMessage =
   | { type: "subscribe"; symbol: string }
   | { type: "unsubscribe"; symbol: string }
+  | { type: "replay"; symbol: string; windowSeconds: 60 | 180 | 300 }
   | { type: "ping" };
 
 export type ServerSocketMessage =
   | { type: "connected"; receivedAt: string }
   | { type: "subscribed"; symbol: string; receivedAt: string }
   | { type: "unsubscribed"; symbol: string; receivedAt: string }
-  | { type: "trade"; trade: RealtimeTrade }
+  | { type: "trade"; trade: RealtimeTrade; dataMode: DataMode }
+  | {
+      type: "replay_started";
+      symbol: string;
+      windowSeconds: 60 | 180 | 300;
+      tradeCount: number;
+      sourceTradeCount: number;
+      dataMode: "replay" | "demo";
+      receivedAt: string;
+    }
+  | {
+      type: "replay_completed";
+      symbol: string;
+      dataMode: "replay" | "demo";
+      receivedAt: string;
+    }
   | { type: "error"; message: string; receivedAt: string }
   | { type: "pong"; receivedAt: string };
 

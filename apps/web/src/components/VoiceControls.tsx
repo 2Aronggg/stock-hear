@@ -19,7 +19,7 @@ interface VoiceControlsProps {
   onPreferencesChange: (preferences: ListeningPreferences) => void;
   onPlayCurrentTrade: (preferences: ListeningPreferences) => boolean;
   onReplayLast: () => boolean;
-  onReplayRecent: (windowSeconds: number) => number;
+  onReplayRecent: (windowSeconds: number) => boolean;
   onSoundEnabledChange: (enabled: boolean) => void;
   onSymbolChange: (symbol: string) => void;
   onVolumeChange: (volume: number) => void;
@@ -158,11 +158,11 @@ export const VoiceControls = ({
 
     if (plan.action === "REPLAY_RECENT") {
       const seconds = Number(plan.timeRange.replace("s", "")) || 60;
-      const count = onReplayRecent(seconds);
+      const requested = onReplayRecent(seconds);
       showOnly(
-        count > 0
-          ? `${plan.stockName} 최근 ${seconds}초 구간 ${count}건 재생.`
-          : `최근 ${seconds}초 구간에 재생할 데이터가 없습니다.`
+        requested
+          ? `${plan.stockName} 최근 ${seconds}초 구간 재생을 요청했습니다.`
+          : "서버 연결 후 다시 요청해 주세요."
       );
     }
   };

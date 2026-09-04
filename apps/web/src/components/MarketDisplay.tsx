@@ -1,8 +1,16 @@
-import type { ConnectionStatus, RealtimeTrade } from "../types";
+import type {
+  ConnectionStatus,
+  DataMode,
+  ReplayStatus,
+  RealtimeTrade
+} from "../types";
 
 interface MarketDisplayProps {
   status: ConnectionStatus;
   trade: RealtimeTrade | null;
+  dataMode: DataMode;
+  replayStatus: ReplayStatus;
+  onReplayRequest: (windowSeconds: 60 | 180 | 300) => void;
 }
 
 const statusLabel: Record<ConnectionStatus, string> = {
@@ -34,7 +42,13 @@ const formatSignedPrice = (
   currency: "KRW" | "USD"
 ): string => `${price > 0 ? "+" : ""}${formatPrice(price, currency)}`;
 
-export const MarketDisplay = ({ status, trade }: MarketDisplayProps) => {
+export const MarketDisplay = ({
+  status,
+  trade,
+  dataMode,
+  replayStatus,
+  onReplayRequest
+}: MarketDisplayProps) => {
   const trendClass = trade
     ? trade.changeRate > 0
       ? "up"
@@ -46,14 +60,60 @@ export const MarketDisplay = ({ status, trade }: MarketDisplayProps) => {
   return (
     <section className={`market-feature ${trendClass}`} aria-labelledby="market-display-title">
       <div className="market-feature-copy">
-        <span className="panel-kicker">LIVE DATA FROM 한국투자증권 API</span>
-        <h2 id="market-display-title">실시간 체결 정보</h2>
+        <span className="panel-kicker">
+          {dataMode === "live"
+            ? "LIVE DATA FROM 한국투자증권 API"
+            : dataMode === "replay"
+              ? "RECENT LIVE DATA"
+              : "SAVED MARKET DATA"}
+        </span>
+        <h2 id="market-display-title">
+          {dataMode === "live"
+            ? "실시간 체결 정보"
+            : dataMode === "replay"
+              ? "최근 체결 다시 듣기"
+              : "저장 데이터 재생"}
+        </h2>
         <div className="status-block">
           <p className={`status-badge ${status}`}>
             <span className="status-dot" aria-hidden="true" />
             {statusLabel[status]}
           </p>
-          <p>{statusDescription[status]}</p>
+          <p>
+            {dataMode === "demo"
+              ? "저장된 실제 체결 데이터를 시간 순서대로 재생합니다."
+              : dataMode === "replay"
+                ? "방금 수신한 실제 체결 데이터를 시간 순서대로 재생합니다."
+                : statusDescription[status]}
+          </p>
+          <p className={`data-mode-label ${dataMode}`}>
+            {replayStatus === "error"
+              ? "Demo Replay 오류"
+              : dataMode === "live"
+                ? "실시간 모드"
+                : dataMode === "replay"
+                  ? replayStatus === "completed"
+                    ? "Replay 완료"
+                    : "Replay 재생 중"
+                : replayStatus === "playing"
+                ? "Demo Replay 재생 중"
+                : replayStatus === "completed"
+                  ? "Demo Replay 완료"
+                  : "Demo Replay"}
+          </p>
+        </div>
+        <div className="replay-controls" aria-label="저장 데이터 다시 듣기">
+          {[60, 180, 300].map((seconds) => (
+            <button
+              className="text-command"
+              type="button"
+              key={seconds}
+              disabled={status !== "connected"}
+              onClick={() => onReplayRequest(seconds as 60 | 180 | 300)}
+            >
+              {seconds / 60}분 재생
+            </button>
+          ))}
         </div>
       </div>
 

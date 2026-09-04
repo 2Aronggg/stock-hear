@@ -124,3 +124,22 @@ Invoke-RestMethod `
 샘플이 없으면 빈 목록으로 정상 시작하며, 잘못된 JSON이나 필드가 있으면
 서버 로그와 `/api/health`의 `replay.status`에서 오류를 확인할 수 있다.
 
+## Replay WebSocket 요청
+
+클라이언트는 저장된 샘플의 최근 1분·3분·5분을 요청할 수 있다.
+
+```json
+{
+  "type": "replay",
+  "symbol": "005930",
+  "windowSeconds": 300
+}
+```
+
+`windowSeconds`는 `60`, `180`, `300` 중 하나만 허용한다. 서버는
+요청한 구간만큼 메모리 버퍼가 충분하면 `dataMode: "replay"`로 최근 실제
+체결을 사용한다. 버퍼가 부족하면 저장된 샘플을 `dataMode: "demo"`로
+사용한다. `replay_started` 뒤에 체결 데이터를 순서대로 전송하고 마지막에
+`replay_completed`를 보낸다. 많은 체결은 가격 흐름을 유지하며 최대
+300건으로 균등 추출한다.
+
