@@ -7,8 +7,10 @@ import { getStockName, isSupportedSymbol, StockSelector } from "./components/Sto
 import { VoiceControls } from "./components/VoiceControls";
 import type {
   ConnectionStatus,
+  DataMode,
   ListeningPreferences,
   RealtimeTrade,
+  ReplayStatus,
   ServerSocketMessage,
   SoundEventLog
 } from "./types";
@@ -18,7 +20,6 @@ const websocketUrl = import.meta.env.VITE_WEBSOCKET_URL ?? "ws://localhost:4000/
 const selectedSymbolStorageKey = "stock-hear:selected-symbol";
 const defaultSymbol = "005930";
 const soundEnabledStorageKey = "stock-hear:sound-enabled";
-const recentTradesWindowMs = 5 * 60 * 1000;
 
 const defaultPreferences: ListeningPreferences = {
   mode: "price-volume",
@@ -70,6 +71,8 @@ const iconBadges = [
 export const App = () => {
   const [symbol, setSymbol] = useState(getInitialSymbol);
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
+  const [dataMode, setDataMode] = useState<DataMode>("live");
+  const [replayStatus, setReplayStatus] = useState<ReplayStatus>("idle");
   const [latestTrade, setLatestTrade] = useState<RealtimeTrade | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(getInitialSoundEnabled);
   const [muted, setMuted] = useState(false);
@@ -79,7 +82,6 @@ export const App = () => {
   const sonification = useMemo(() => new Sonification(), []);
   const socketRef = useRef<MarketSocket | null>(null);
   const soundEnabledRef = useRef(soundEnabled);
-  const recentTradesRef = useRef<Array<{ trade: RealtimeTrade; receivedAtMs: number }>>([]);
 
   useEffect(() => {
     sonification.setMuted(muted || !soundEnabled);
@@ -97,16 +99,33 @@ export const App = () => {
       symbol,
       onStatusChange: setStatus,
       onMessage: (message: ServerSocketMessage) => {
+        if (message.type === "replay_started") {
+          setDataMode("demo");
+          setReplayStatus("playing");
+          setLatestTrade(null);
+          soundEnabledRef.current = true;
+          setSoundEnabled(true);
+          window.localStorage.setItem(soundEnabledStorageKey, "true");
+          return;
+        }
+
+        if (message.type === "replay_completed") {
+          setReplayStatus("completed");
+          return;
+        }
+
+        if (message.type === "error") {
+          setReplayStatus("error");
+          return;
+        }
+
         if (message.type === "trade") {
           setLatestTrade(message.trade);
+          setDataMode(message.dataMode);
 
-          const receivedAtMs = Date.now();
-          const cutoff = receivedAtMs - recentTradesWindowMs;
-
-          recentTradesRef.current = [
-            ...recentTradesRef.current.filter((entry) => entry.receivedAtMs >= cutoff),
-            { trade: message.trade, receivedAtMs }
-          ];
+          if (message.dataMode === "live") {
+            setReplayStatus("idle");
+          }
 
           if (soundEnabledRef.current) {
             const soundEvent = sonification.playTrade(message.trade, getStockName(symbol));
@@ -130,7 +149,8 @@ export const App = () => {
 
     window.localStorage.setItem(selectedSymbolStorageKey, nextSymbol);
     setLatestTrade(null);
-    recentTradesRef.current = [];
+    setDataMode("live");
+    setReplayStatus("idle");
     setSymbol(nextSymbol);
   };
 
@@ -192,23 +212,16 @@ export const App = () => {
     return Boolean(soundEvent);
   };
 
-  // "최근 1분을 들려줘" — 최근 수신한 체결 데이터를 순서대로 다시 재생한다.
-  // 재생 목록만 AI가 고르고, 각 음의 높낮이/길이는 기존 엔진 규칙 그대로 따른다.
-  const handleReplayRecent = (windowSeconds: number): number => {
-    const cutoff = Date.now() - windowSeconds * 1000;
-    const entries = recentTradesRef.current.filter((entry) => entry.receivedAtMs >= cutoff);
+  const handleReplayRecent = (windowSeconds: number): boolean => {
+    if (
+      windowSeconds !== 60 &&
+      windowSeconds !== 180 &&
+      windowSeconds !== 300
+    ) {
+      return false;
+    }
 
-    entries.forEach((entry, index) => {
-      window.setTimeout(() => {
-        const soundEvent = sonification.playTrade(entry.trade, getStockName(symbol));
-
-        if (soundEvent) {
-          setLastSoundEvent(soundEvent);
-        }
-      }, index * 180);
-    });
-
-    return entries.length;
+    return socketRef.current?.replay(symbol, windowSeconds) ?? false;
   };
 
   return (
@@ -217,13 +230,19 @@ export const App = () => {
         본문으로 바로가기
       </a>
       <div id="live-region" className="sr-only" aria-live="polite" aria-atomic="true">
-        {status === "connected"
-          ? "서버에 연결되었습니다."
-          : status === "error"
-            ? "서버 연결에 실패했습니다."
-            : status === "disconnected"
-              ? "서버 연결이 끊어졌습니다."
-              : ""}
+        {replayStatus === "playing"
+          ? "저장된 체결 데이터 재생을 시작했습니다."
+          : replayStatus === "completed"
+            ? "저장된 체결 데이터 재생이 완료되었습니다."
+            : replayStatus === "error"
+              ? "저장된 체결 데이터를 재생할 수 없습니다."
+              : status === "connected"
+                ? "서버에 연결되었습니다."
+                : status === "error"
+                  ? "서버 연결에 실패했습니다."
+                  : status === "disconnected"
+                    ? "서버 연결이 끊어졌습니다."
+                    : ""}
       </div>
       <main id="main-content" className="page">
         <div className="shell">
@@ -257,7 +276,13 @@ export const App = () => {
             </div>
           </header>
 
-          <MarketDisplay status={status} trade={latestTrade} />
+          <MarketDisplay
+            status={status}
+            trade={latestTrade}
+            dataMode={dataMode}
+            replayStatus={replayStatus}
+            onReplayRequest={handleReplayRecent}
+          />
 
           <div className="grid grid-secondary">
             <StockSelector symbol={symbol} onSymbolChange={handleSymbolChange} />

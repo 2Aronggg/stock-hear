@@ -18,13 +18,35 @@ import { TradeBuffer } from "./replay/tradeBuffer.js";
 
 type ClientMessage =
   | { type: "subscribe"; symbol: string }
-  | { type: "unsubscribe"; symbol: string };
+  | { type: "unsubscribe"; symbol: string }
+  | {
+      type: "replay";
+      symbol: string;
+      windowSeconds: 60 | 180 | 300;
+    };
+
+type DataMode = "live" | "replay" | "demo";
 
 type ServerMessage =
   | { type: "connected"; receivedAt: string }
   | { type: "subscribed"; symbol: string; receivedAt: string }
   | { type: "unsubscribed"; symbol: string; receivedAt: string }
-  | { type: "trade"; trade: MarketTrade }
+  | { type: "trade"; trade: MarketTrade; dataMode: DataMode }
+  | {
+      type: "replay_started";
+      symbol: string;
+      windowSeconds: 60 | 180 | 300;
+      tradeCount: number;
+      sourceTradeCount: number;
+      dataMode: "replay" | "demo";
+      receivedAt: string;
+    }
+  | {
+      type: "replay_completed";
+      symbol: string;
+      dataMode: "replay" | "demo";
+      receivedAt: string;
+    }
   | { type: "error"; message: string; receivedAt: string };
 
 const MOCK_SURGE_SYMBOL = "MOCK_SURGE";
@@ -42,6 +64,9 @@ const tradeBuffer = new TradeBuffer();
 const replaySampleStore = new ReplaySampleStore();
 const serverStartedAt = Date.now();
 const replaySampleWindowMs = 5 * 60 * 1000;
+const replayIntervalMs = 150;
+const maxReplayTrades = 300;
+const replayCoverageToleranceMs = 5 * 1000;
 
 let kisConnection = kisSocket.getConnectionSnapshot();
 let lastTradeAt: string | null = null;
@@ -76,6 +101,12 @@ const mockTimers = new Map<
   WebSocket,
   ReturnType<typeof setInterval>
 >();
+
+interface ReplaySession {
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const replaySessions = new Map<WebSocket, ReplaySession>();
 
 app.use(cors({ origin: config.CLIENT_ORIGIN }));
 app.use(express.json());
@@ -258,6 +289,16 @@ const createMockTrade = (tick: number): MarketTrade => {
   };
 };
 
+const stopReplay = (socket: WebSocket): void => {
+  const session = replaySessions.get(socket);
+
+  if (session?.timer) {
+    clearTimeout(session.timer);
+  }
+
+  replaySessions.delete(socket);
+};
+
 const startMock = (socket: WebSocket): void => {
   stopMock(socket);
 
@@ -268,7 +309,8 @@ const startMock = (socket: WebSocket): void => {
 
     sendJson(socket, {
       type: "trade",
-      trade: createMockTrade(tick)
+      trade: createMockTrade(tick),
+      dataMode: "demo"
     });
   };
 
@@ -284,6 +326,8 @@ const startMock = (socket: WebSocket): void => {
 const releaseClientSubscription = (
   socket: WebSocket
 ): void => {
+  stopReplay(socket);
+
   const currentSymbol = clientSymbols.get(socket);
 
   if (!currentSymbol) {
@@ -377,16 +421,20 @@ const parseClientMessage = (
 
     const record = parsed as Record<string, unknown>;
 
-    if (
-      (record.type === "subscribe" ||
-        record.type === "unsubscribe") &&
-      typeof record.symbol === "string"
-    ) {
-      const symbol = record.symbol.trim().toUpperCase();
+    if (typeof record.symbol !== "string") {
+      return null;
+    }
 
-      if (!symbol) {
-        return null;
-      }
+    const symbol = record.symbol.trim().toUpperCase();
+
+    if (!symbol) {
+      return null;
+    }
+
+    if (
+      record.type === "subscribe" ||
+      record.type === "unsubscribe"
+    ) {
 
       return {
         type: record.type,
@@ -394,10 +442,152 @@ const parseClientMessage = (
       };
     }
 
+    if (
+      record.type === "replay" &&
+      (record.windowSeconds === 60 ||
+        record.windowSeconds === 180 ||
+        record.windowSeconds === 300)
+    ) {
+      return {
+        type: "replay",
+        symbol,
+        windowSeconds: record.windowSeconds
+      };
+    }
+
     return null;
   } catch {
     return null;
   }
+};
+
+const selectReplayWindow = (
+  trades: MarketTrade[],
+  windowSeconds: 60 | 180 | 300
+): MarketTrade[] => {
+  const lastTrade = trades.at(-1);
+
+  if (!lastTrade) {
+    return [];
+  }
+
+  const cutoffMs = Date.parse(lastTrade.receivedAt) - windowSeconds * 1000;
+
+  return trades.filter(
+    (trade) => Date.parse(trade.receivedAt) >= cutoffMs
+  );
+};
+
+const hasReplayCoverage = (
+  trades: MarketTrade[],
+  windowSeconds: 60 | 180 | 300
+): boolean => {
+  const firstTrade = trades[0];
+  const lastTrade = trades.at(-1);
+
+  if (!firstTrade || !lastTrade) {
+    return false;
+  }
+
+  const durationMs =
+    Date.parse(lastTrade.receivedAt) - Date.parse(firstTrade.receivedAt);
+
+  return durationMs >= windowSeconds * 1000 - replayCoverageToleranceMs;
+};
+
+const downsampleTrades = (
+  trades: MarketTrade[],
+  maximumCount: number
+): MarketTrade[] => {
+  if (trades.length <= maximumCount) {
+    return trades;
+  }
+
+  return Array.from({ length: maximumCount }, (_, index) => {
+    const sourceIndex = Math.round(
+      (index * (trades.length - 1)) / (maximumCount - 1)
+    );
+
+    return trades[sourceIndex]!;
+  });
+};
+
+const startReplay = (
+  socket: WebSocket,
+  symbol: string,
+  windowSeconds: 60 | 180 | 300
+): void => {
+  releaseClientSubscription(socket);
+
+  const bufferedTrades = tradeBuffer.getRecent(
+    symbol,
+    windowSeconds * 1000
+  );
+  const sample = replaySamples.get(symbol);
+  const useBuffer =
+    hasReplayCoverage(bufferedTrades, windowSeconds) || !sample;
+  const dataMode: Exclude<DataMode, "live"> = useBuffer
+    ? "replay"
+    : "demo";
+  const sourceTrades = useBuffer
+    ? bufferedTrades
+    : selectReplayWindow(sample.trades, windowSeconds);
+  const replayTrades = downsampleTrades(sourceTrades, maxReplayTrades);
+
+  if (replayTrades.length === 0) {
+    sendJson(socket, {
+      type: "error",
+      message: `Replay data is not available for ${symbol}.`,
+      receivedAt: new Date().toISOString()
+    });
+    return;
+  }
+
+  const session: ReplaySession = { timer: null };
+  replaySessions.set(socket, session);
+
+  sendJson(socket, {
+    type: "replay_started",
+    symbol,
+    windowSeconds,
+    tradeCount: replayTrades.length,
+    sourceTradeCount: sourceTrades.length,
+    dataMode,
+    receivedAt: new Date().toISOString()
+  });
+
+  let index = 0;
+
+  const sendNextTrade = (): void => {
+    if (replaySessions.get(socket) !== session) {
+      return;
+    }
+
+    const trade = replayTrades[index];
+
+    if (!trade) {
+      replaySessions.delete(socket);
+      sendJson(socket, {
+        type: "replay_completed",
+        symbol,
+        dataMode,
+        receivedAt: new Date().toISOString()
+      });
+      subscribeClient(socket, symbol);
+      return;
+    }
+
+    sendJson(socket, {
+      type: "trade",
+      trade,
+      dataMode
+    });
+
+    index += 1;
+    session.timer = setTimeout(sendNextTrade, replayIntervalMs);
+  };
+
+  sendNextTrade();
 };
 
 const handleClientMessage = (
@@ -418,6 +608,11 @@ const handleClientMessage = (
 
   if (message.type === "subscribe") {
     subscribeClient(socket, message.symbol);
+    return;
+  }
+
+  if (message.type === "replay") {
+    startReplay(socket, message.symbol, message.windowSeconds);
     return;
   }
 
@@ -464,7 +659,8 @@ kisSocket.onTrade((trade) => {
 
     sendJson(client, {
       type: "trade",
-      trade
+      trade,
+      dataMode: "live"
     });
   }
 });
@@ -502,4 +698,3 @@ const startServer = (): void => {
 };
 
 startServer();
-

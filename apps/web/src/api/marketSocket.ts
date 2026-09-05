@@ -78,6 +78,21 @@ export class MarketSocket {
     });
   }
 
+  replay(symbol: string, windowSeconds: 60 | 180 | 300): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    this.currentSymbol = symbol;
+    this.send({
+      type: "replay",
+      symbol,
+      windowSeconds
+    });
+
+    return true;
+  }
+
   disconnect(): void {
     this.manuallyDisconnected = true;
 
